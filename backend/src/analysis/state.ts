@@ -184,8 +184,20 @@ export function deriveTaskStates(input: DeriveTaskStatesInput): DerivedTaskState
       if (next === 0) queue.push(dependent);
     }
   }
-  const cyclic = new Set(tasks.map((task) => task.task_id).filter((id) => !order.includes(id)));
-  order.push(...tasks.map((task) => task.task_id).filter((id) => cyclic.has(id)));
+  // Kahn's unresolved set also contains tasks downstream of a cycle. Identify
+  // actual cycle members by checking whether each task can reach itself.
+  const inCycle = (start: string, current: string, seen = new Set<string>()): boolean => {
+    for (const dependency of depsByTask.get(current) ?? []) {
+      if (dependency === start) return true;
+      if (!seen.has(dependency)) {
+        seen.add(dependency);
+        if (inCycle(start, dependency, seen)) return true;
+      }
+    }
+    return false;
+  };
+  const cyclic = new Set(tasks.map((task) => task.task_id).filter((id) => inCycle(id, id)));
+  order.push(...tasks.map((task) => task.task_id).filter((id) => !order.includes(id)));
 
   const result = new Map<string, DerivedTaskState>();
   for (const taskId of order) {

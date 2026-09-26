@@ -203,6 +203,22 @@ describe("deriveTaskStates", () => {
     expect(states.map((state) => state.blocking_task_ids)).toEqual([["b"], ["a"]]);
   });
 
+  it("does not label a task downstream of a cycle as a cycle member", () => {
+    const tasks = [
+      task({ task_id: "a", task_key: "PC-1" }),
+      task({ task_id: "b", task_key: "PC-2" }),
+      task({ task_id: "c", task_key: "PC-3", plan_status: "in_progress" }),
+    ];
+    const states = derive(tasks, [], [], [
+      { task_id: "a", depends_on_task_id: "b" },
+      { task_id: "b", depends_on_task_id: "a" },
+      { task_id: "c", depends_on_task_id: "a" },
+    ]);
+    expect(states[2].computed_status).toBe("possibly_blocked");
+    expect(states[2].explanation).toContain("Blocked by");
+    expect(states[2].explanation).not.toContain("Dependency cycle involving");
+  });
+
   it("ignores dependencies to tasks outside the analyzed set", () => {
     expect(derive(undefined, [], [], [{ task_id: "a", depends_on_task_id: "missing" }])[0].computed_status).toBe(
       "not_started",

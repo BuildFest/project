@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { updateBrief } from "@/lib/api";
-import { ProjectWorkspace } from "@/lib/types";
-import { boxBodyCls, boxCls, boxHeaderCls, boxTitleCls, buttonCls, formatDate, ghostButtonCls, inputCls, smallButtonCls } from "@/lib/ui";
+import { useEffect, useRef, useState } from "react";
+import type { ProjectWorkspace } from "@/lib/types";
+import { boxCls, boxHeaderCls, boxTitleCls, formatDate, smallButtonCls } from "@/lib/ui";
+import BriefFullscreen from "./brief/BriefFullscreen";
+import BriefView from "./brief/BriefView";
 
-// Markdown brief for now. Swap the textarea for a rich-text editor (Tiptap)
-// later without changing the API: brief.content stays the source of truth.
+// Brief card on the Plan tab: rendered preview + opens the full-screen editor.
 export default function BriefEditor({
   workspace,
   onChange,
@@ -14,14 +14,22 @@ export default function BriefEditor({
   workspace: ProjectWorkspace;
   onChange: (w: ProjectWorkspace) => void;
 }) {
-  const { project, brief } = workspace;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(brief.content);
+  const { brief } = workspace;
+  const [open, setOpen] = useState(false);
+  const hasContent = brief.content.trim().length > 0;
 
-  async function save() {
-    onChange(await updateBrief(project.project_id, draft));
-    setEditing(false);
-  }
+  // Only fade the bottom of the preview when the brief is actually cut off.
+  const previewRef = useRef<HTMLButtonElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el) return;
+    const check = () => setClipped(el.scrollHeight > el.clientHeight + 4);
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [hasContent]);
 
   return (
     <section className={boxCls}>
@@ -29,44 +37,32 @@ export default function BriefEditor({
         <h2 className={boxTitleCls}>Brief</h2>
         <div className="flex items-center gap-3">
           <span className="text-xs text-muted">Updated {formatDate(brief.updated_at)}</span>
-          {!editing && (
-            <button className={smallButtonCls} onClick={() => setEditing(true)}>
-              Edit
-            </button>
-          )}
+          <button className={smallButtonCls} onClick={() => setOpen(true)}>
+            {hasContent ? "Edit" : "Write brief"}
+          </button>
         </div>
       </div>
 
-      <div className={boxBodyCls}>
-        {editing ? (
-          <div className="space-y-2">
-            <textarea
-              className={`${inputCls} h-56 w-full font-mono`}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                className={ghostButtonCls}
-                onClick={() => {
-                  setDraft(brief.content);
-                  setEditing(false);
-                }}
-              >
-                Cancel
-              </button>
-              <button className={buttonCls} onClick={save}>Save brief</button>
-            </div>
-          </div>
-        ) : brief.content ? (
-          <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-text">{brief.content}</pre>
-        ) : (
-          <p className="text-sm text-muted">
-            No brief yet. Describe the idea, requirements and definition of done.
+      {hasContent ? (
+        <div className="relative">
+          <button ref={previewRef} className="block max-h-72 w-full overflow-hidden px-4 py-3 text-left"
+            onClick={() => setOpen(true)} title="Open the brief">
+            <BriefView markdown={brief.content} />
+          </button>
+          {clipped && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-surface to-transparent" />
+          )}
+        </div>
+      ) : (
+        <button className="block w-full px-4 py-8 text-center hover:bg-raised/60" onClick={() => setOpen(true)}>
+          <p className="font-semibold text-header">No brief yet</p>
+          <p className="mt-1 text-sm text-muted">
+            Capture the idea, requirements, architecture and definition of done. Opens a full-screen editor.
           </p>
-        )}
-      </div>
+        </button>
+      )}
+
+      {open && <BriefFullscreen workspace={workspace} onChange={onChange} onClose={() => setOpen(false)} />}
     </section>
   );
 }

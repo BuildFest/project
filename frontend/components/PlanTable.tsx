@@ -124,6 +124,9 @@ export default function PlanTable({
                   <input
                     key={t.title}
                     className={cellInput}
+                    autoComplete="off"
+                    data-1p-ignore
+                    name={`task-title-${t.task_id}`}
                     defaultValue={t.title}
                     onBlur={(e) => {
                       const v = e.target.value.trim();

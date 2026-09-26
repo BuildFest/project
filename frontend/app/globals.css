@@ -19,8 +19,8 @@
   --pc-btn-hover: #262c36;
 
   --pc-header: #f0f6fc;
-  --pc-text: #d1d7e0;
-  --pc-muted: #9198a1;
+  --pc-text: #e6edf3;
+  --pc-muted: #9ea7b3;
   --pc-faint: #656c76;
 
   --pc-signal: #c4551f;       /* brand orange: primary buttons, selected tab */
@@ -89,4 +89,84 @@ body {
 /* Native date picker icon is black by default; make it visible on dark. */
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   filter: invert(0.8);
+}
+
+/* Safari colors date/time segments blue; keep them the normal text color. */
+input[type="datetime-local"],
+input[type="datetime-local"]::-webkit-datetime-edit,
+input[type="datetime-local"]::-webkit-datetime-edit-fields-wrapper,
+input[type="datetime-local"]::-webkit-datetime-edit-text,
+input[type="datetime-local"]::-webkit-datetime-edit-month-field,
+input[type="datetime-local"]::-webkit-datetime-edit-day-field,
+input[type="datetime-local"]::-webkit-datetime-edit-year-field,
+input[type="datetime-local"]::-webkit-datetime-edit-hour-field,
+input[type="datetime-local"]::-webkit-datetime-edit-minute-field,
+input[type="datetime-local"]::-webkit-datetime-edit-ampm-field {
+  color: var(--pc-header);
+}
+input[type="datetime-local"]:invalid::-webkit-datetime-edit,
+input[type="datetime-local"]:not(:valid)::-webkit-datetime-edit {
+  color: var(--pc-muted);
+}
+
+/* ==========================================================================
+   Brief document styles (Tiptap). Modeled on GitHub's Markdown rendering.
+   ========================================================================== */
+
+.pc-prose {
+  color: var(--pc-text);
+  font-size: 15px;
+  line-height: 1.65;
+  outline: none;
+  word-wrap: break-word;
+}
+.pc-prose-editable { min-height: 60vh; caret-color: var(--pc-signal); }
+.pc-prose > * + * { margin-top: 0.75em; }
+.pc-prose h1, .pc-prose h2, .pc-prose h3 { color: var(--pc-header); font-weight: 600; line-height: 1.25; }
+.pc-prose h1 { font-size: 1.85em; padding-bottom: 0.3em; border-bottom: 1px solid var(--pc-line); margin-top: 1.2em; }
+.pc-prose h2 { font-size: 1.4em; padding-bottom: 0.3em; border-bottom: 1px solid var(--pc-line); margin-top: 1.4em; }
+.pc-prose h3 { font-size: 1.15em; margin-top: 1.2em; }
+.pc-prose > :first-child { margin-top: 0; }
+.pc-prose a { color: var(--pc-link); text-decoration: none; }
+.pc-prose a:hover { text-decoration: underline; }
+.pc-prose strong { color: var(--pc-header); font-weight: 600; }
+.pc-prose ul { list-style: disc; padding-left: 1.6em; }
+.pc-prose ol { list-style: decimal; padding-left: 1.6em; }
+.pc-prose li + li { margin-top: 0.25em; }
+.pc-prose li > p { margin: 0; }
+.pc-prose blockquote { border-left: 3px solid var(--pc-line-strong); padding: 0 1em; color: var(--pc-muted); }
+.pc-prose code {
+  font-family: var(--font-mono);
+  font-size: 85%;
+  background: color-mix(in oklab, var(--pc-muted) 20%, transparent);
+  border-radius: 6px;
+  padding: 0.15em 0.4em;
+}
+.pc-prose pre {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--pc-raised);
+  border: 1px solid var(--pc-line);
+  border-radius: 6px;
+  padding: 12px 16px;
+  overflow-x: auto;
+}
+.pc-prose pre code { background: none; padding: 0; font-size: inherit; }
+.pc-prose hr { border: 0; border-top: 2px solid var(--pc-line); margin: 1.5em 0; }
+
+/* Checklists */
+.pc-prose ul[data-type="taskList"] { list-style: none; padding-left: 0.2em; }
+.pc-prose ul[data-type="taskList"] li { display: flex; gap: 0.55em; align-items: flex-start; }
+.pc-prose ul[data-type="taskList"] li > label { margin-top: 0.3em; user-select: none; }
+.pc-prose ul[data-type="taskList"] li > div { flex: 1; }
+.pc-prose ul[data-type="taskList"] input[type="checkbox"] { accent-color: var(--pc-green); width: 14px; height: 14px; cursor: pointer; }
+.pc-prose ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--pc-muted); text-decoration: line-through; }
+
+/* Placeholder on the empty first line */
+.pc-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--pc-faint);
+  float: left;
+  height: 0;
+  pointer-events: none;
 }

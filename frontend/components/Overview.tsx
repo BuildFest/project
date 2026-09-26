@@ -279,7 +279,13 @@ function Sidebar({
   const blocked = tasks.filter((t) => eff(t) === "possibly_blocked").length;
   const notStarted = tasks.length - done - inProgress - blocked;
   const pct = (n: number) => (tasks.length ? (n / tasks.length) * 100 : 0);
-  const excerpt = brief.content.trim().split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "");
+  // First real sentence of the brief (skip headings, list markers, code fences).
+  const excerpt = brief.content
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l && !/^(#|```|- \[|[-*]\s*$|>)/.test(l))
+    ?.replace(/^[-*]\s+/, "")
+    .replace(/[*_`]/g, "");
 
   return (
     <aside className="space-y-6 text-sm">

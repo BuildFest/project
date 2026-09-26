@@ -183,8 +183,13 @@ describe("reviewAnalysis", () => {
     const response = answer();
     response.tasks[0].status = "complete";
     const merged = event({ event_id: "event_a", event_type: "pull_request_merged" });
-    const result = await reviewAnalysis(routerWith(response), { ...base, events: [merged] });
+    const result = await reviewAnalysis(routerWith(response), {
+      ...base,
+      events: [merged],
+      states: [state({ blocking_task_ids: ["task_dependency"] })],
+    });
     expect(result.states[0].computed_status).toBe("complete");
+    expect(result.states[0].blocking_task_ids).toEqual([]);
     expect(result.applied).toBe(true);
   });
 

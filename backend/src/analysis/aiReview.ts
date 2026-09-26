@@ -149,6 +149,7 @@ export async function reviewAnalysis(
         computed_status: item.status,
         // Human corrections remain authoritative over both rules and AI.
         effective_status: rule.override_status ?? item.status,
+        blocking_task_ids: item.status === "possibly_blocked" ? rule.blocking_task_ids : [],
         confidence: item.confidence,
         evidence_event_ids: item.evidence_event_ids,
         explanation: item.explanation,

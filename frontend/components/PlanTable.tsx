@@ -11,6 +11,9 @@ import {
 } from "@/lib/api";
 import { PlanStatus, Priority, ProjectWorkspace, Scope, Task } from "@/lib/types";
 import {
+  boxCls,
+  boxHeaderCls,
+  boxTitleCls,
   buttonCls,
   fromLocalInput,
   inputCls,
@@ -68,10 +71,12 @@ export default function PlanTable({
   }
 
   return (
-    <section className="rounded-sm border border-line bg-surface p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-display text-lg font-semibold uppercase tracking-wider">Plan</h2>
-        <label className="flex items-center gap-2 text-sm text-muted">
+    <section className={boxCls}>
+      <div className={boxHeaderCls}>
+        <h2 className={boxTitleCls}>
+          Plan <span className="ml-1 rounded-full bg-line px-2 py-0.5 text-xs font-medium text-muted">{visible.length}</span>
+        </h2>
+        <label className="flex items-center gap-2 text-xs text-muted">
           <input type="checkbox" checked={showArchived}
             onChange={(e) => setShowArchived(e.target.checked)} />
           Show archived
@@ -79,14 +84,14 @@ export default function PlanTable({
       </div>
 
       {error && (
-        <p className="mb-3 rounded-sm bg-red/10 px-3 py-2 text-sm text-red">
+        <p className="border-b border-red/40 bg-red/10 px-4 py-2 text-sm text-red">
           {error}
         </p>
       )}
 
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto px-4">
         <table className="w-full min-w-[1100px] text-left text-sm">
-          <thead className="font-display text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+          <thead className="text-xs font-semibold text-muted">
             <tr className="border-b border-line">
               <th className="py-2 pr-2">Key</th>
               <th className="py-2 pr-2">Task</th>
@@ -229,7 +234,7 @@ export default function PlanTable({
         </table>
       </div>
 
-      <form onSubmit={handleAdd} className="mt-3 flex gap-2">
+      <form onSubmit={handleAdd} className="flex gap-2 border-t border-line bg-raised/50 p-4">
         <input className={`${inputCls} flex-1`} placeholder="New task title, e.g. Auth API routes"
           value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
         <button className={buttonCls} disabled={!newTitle.trim()}>Add task</button>

@@ -3,7 +3,15 @@
 import { useState } from "react";
 import { addMilestone, archiveMilestone } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
-import { buttonCls, formatDate, fromLocalInput, inputCls } from "@/lib/ui";
+import {
+  boxCls,
+  boxHeaderCls,
+  boxTitleCls,
+  formatDate,
+  fromLocalInput,
+  ghostButtonCls,
+  inputCls,
+} from "@/lib/ui";
 
 export default function MilestoneEditor({
   workspace,
@@ -13,7 +21,9 @@ export default function MilestoneEditor({
   onChange: (w: ProjectWorkspace) => void;
 }) {
   const { project } = workspace;
-  const milestones = workspace.milestones.filter((m) => !m.archived);
+  const milestones = workspace.milestones
+    .filter((m) => !m.archived)
+    .sort((a, b) => (a.target_at ?? "").localeCompare(b.target_at ?? ""));
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
 
@@ -31,37 +41,43 @@ export default function MilestoneEditor({
   }
 
   return (
-    <section className="rounded-sm border border-line bg-surface p-4">
-      <h2 className="mb-3 font-display text-lg font-semibold uppercase tracking-wider">Milestones</h2>
-
-      <div className="mb-3 flex flex-wrap gap-2">
-        {milestones.length === 0 && (
-          <p className="text-sm text-muted">No milestones yet (e.g. &quot;Core demo&quot;, &quot;Feature freeze&quot;).</p>
-        )}
-        {milestones.map((m) => (
-          <span
-            key={m.milestone_id}
-            className="inline-flex items-center gap-2 rounded-full border border-line px-3 py-1 text-sm"
-          >
-            <span className="font-medium">{m.name}</span>
-            <span className="text-muted">{formatDate(m.target_at)}</span>
-            <button
-              className="text-muted hover:text-red"
-              title="Remove milestone"
-              onClick={async () => onChange(await archiveMilestone(project.project_id, m.milestone_id))}
-            >
-              ×
-            </button>
-          </span>
-        ))}
+    <section className={boxCls}>
+      <div className={boxHeaderCls}>
+        <h2 className={boxTitleCls}>Milestones</h2>
+        <span className="text-xs text-muted">{milestones.length}</span>
       </div>
 
-      <form onSubmit={handleAdd} className="flex flex-wrap gap-2">
-        <input className={`${inputCls} flex-1`} placeholder="Milestone name" value={name}
+      {milestones.length === 0 ? (
+        <p className="px-4 py-4 text-sm text-muted">
+          No milestones yet, e.g. &quot;Core demo&quot; or &quot;Feature freeze&quot;.
+        </p>
+      ) : (
+        <ul>
+          {milestones.map((m) => (
+            <li key={m.milestone_id}
+              className="group flex items-center justify-between border-b border-line px-4 py-2.5 text-sm">
+              <span className="font-medium text-header">{m.name}</span>
+              <span className="flex items-center gap-3">
+                <span className="font-mono text-xs text-muted">{formatDate(m.target_at)}</span>
+                <button
+                  className="text-xs text-faint opacity-0 hover:text-red group-hover:opacity-100"
+                  title="Remove milestone"
+                  onClick={async () => onChange(await archiveMilestone(project.project_id, m.milestone_id))}
+                >
+                  Remove
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <form onSubmit={handleAdd} className="flex flex-wrap gap-2 p-4">
+        <input className={`${inputCls} min-w-40 flex-1`} placeholder="Milestone name" value={name}
           onChange={(e) => setName(e.target.value)} />
         <input className={inputCls} type="datetime-local" value={target}
           onChange={(e) => setTarget(e.target.value)} />
-        <button className={buttonCls} disabled={!name.trim()}>Add milestone</button>
+        <button className={ghostButtonCls} disabled={!name.trim()}>Add</button>
       </form>
     </section>
   );

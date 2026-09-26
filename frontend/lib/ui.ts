@@ -1,19 +1,24 @@
 // Small shared UI helpers.
 
 export const inputCls =
-  "rounded-sm border border-line bg-surface px-2 py-1 text-sm text-text placeholder:text-faint hover:border-line-strong focus:border-signal focus:outline-none";
+  "rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-text placeholder:text-faint hover:border-line-strong focus:border-link focus:outline-none";
 
+// Primary action (one per area).
 export const buttonCls =
-  "rounded-sm bg-signal px-3 py-1.5 font-display text-sm font-semibold uppercase tracking-wider text-signal-ink hover:brightness-110 disabled:opacity-40";
+  "rounded-md border border-black/20 bg-signal px-3 py-1.5 text-sm font-semibold text-signal-ink hover:bg-signal-hover disabled:cursor-not-allowed disabled:opacity-50";
 
+// Secondary action — GitHub-style default button.
 export const ghostButtonCls =
-  "rounded-sm border border-line-strong px-3 py-1.5 font-display text-sm font-semibold uppercase tracking-wider text-text hover:border-signal hover:text-signal";
+  "rounded-md border border-line bg-raised px-3 py-1.5 text-sm font-medium text-text hover:border-line-strong hover:bg-line disabled:cursor-not-allowed disabled:opacity-50";
 
-// Section headings and table headers — condensed, uppercase, tracked.
-export const labelCls = "font-display text-xs font-semibold uppercase tracking-[0.12em] text-muted";
-export const sectionTitleCls = "font-display text-lg font-semibold uppercase tracking-wider text-text";
+export const labelCls = "mb-1 block text-sm font-medium text-text";
 
-export const panelCls = "rounded-sm border border-line bg-surface p-4";
+// "Box" pattern: bordered panel with a header strip.
+export const boxCls = "overflow-hidden rounded-md border border-line bg-surface";
+export const boxHeaderCls =
+  "flex items-center justify-between gap-3 border-b border-line bg-raised px-4 py-2.5";
+export const boxTitleCls = "text-sm font-semibold text-header";
+export const boxBodyCls = "p-4";
 
 // ISO string -> value for <input type="datetime-local"> (local time, no seconds)
 export function toLocalInput(iso: string | null): string {

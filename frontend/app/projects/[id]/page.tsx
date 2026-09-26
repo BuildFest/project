@@ -20,14 +20,14 @@ export default function ProjectPage() {
   }, [id]);
 
   if (workspace === undefined) {
-    return <main className="p-8 text-sm text-muted">Loading project…</main>;
+    return <main className="mx-auto w-full max-w-7xl px-6 py-8 text-sm text-muted">Loading project…</main>;
   }
 
   if (workspace === null) {
     return (
-      <main className="mx-auto max-w-2xl space-y-3 p-8">
-        <p>Project not found.</p>
-        <Link href="/" className="text-sm text-signal hover:underline">← All projects</Link>
+      <main className="mx-auto w-full max-w-7xl space-y-3 px-6 py-8">
+        <p className="text-header">Project not found.</p>
+        <Link href="/" className="text-sm text-link hover:underline">← All projects</Link>
       </main>
     );
   }
@@ -37,17 +37,23 @@ export default function ProjectPage() {
   const done = active.filter((t) => t.plan_status === "complete").length;
 
   return (
-    <main className="mx-auto max-w-7xl space-y-6 p-8">
-      <header className="space-y-1">
-        <Link href="/" className="text-sm text-muted hover:underline">← All projects</Link>
-        <h1 className="font-display text-5xl font-bold uppercase tracking-wide leading-none border-l-4 border-signal pl-3">
-          {project.name}{" "}
-          <span className="align-middle rounded-sm border border-line px-2 py-0.5 font-mono text-sm font-normal normal-case tracking-normal text-muted">
+    <main className="mx-auto w-full max-w-7xl space-y-6 px-6 py-8">
+      <header>
+        <nav className="mb-2 text-sm text-muted">
+          <Link href="/" className="text-link hover:underline">Projects</Link>
+          <span className="mx-1.5">/</span>
+          <span className="font-semibold text-header">{project.name}</span>
+        </nav>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold text-header">{project.name}</h1>
+          <span className="rounded-full border border-line px-2 font-mono text-xs text-muted">
             {project.task_key_prefix}
           </span>
-        </h1>
-        <p className="text-sm text-muted">
-          {members.map((m) => (m.github_login ? `${m.display_name} (@${m.github_login})` : m.display_name)).join(", ") || "No team yet"}
+        </div>
+        <p className="mt-1 text-sm text-muted">
+          {members
+            .map((m) => (m.github_login ? `${m.display_name} (@${m.github_login})` : m.display_name))
+            .join(", ") || "No team yet"}
           {" · "}due {formatDate(project.deadline_at)}
           {" · "}{done}/{active.length} tasks complete
         </p>

@@ -3,7 +3,16 @@
 import { useState } from "react";
 import { updateBrief } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
-import { buttonCls, ghostButtonCls, formatDate } from "@/lib/ui";
+import {
+  boxBodyCls,
+  boxCls,
+  boxHeaderCls,
+  boxTitleCls,
+  buttonCls,
+  formatDate,
+  ghostButtonCls,
+  inputCls,
+} from "@/lib/ui";
 
 // Markdown brief for now. Swap the textarea for a rich-text editor (Tiptap)
 // later without changing the API: brief.content stays the source of truth.
@@ -24,47 +33,49 @@ export default function BriefEditor({
   }
 
   return (
-    <section className="rounded-sm border border-line bg-surface p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="font-display text-lg font-semibold uppercase tracking-wider">Brief</h2>
-        <span className="text-xs text-muted">updated {formatDate(brief.updated_at)}</span>
+    <section className={boxCls}>
+      <div className={boxHeaderCls}>
+        <h2 className={boxTitleCls}>Brief</h2>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted">Updated {formatDate(brief.updated_at)}</span>
+          {!editing && (
+            <button className={`${ghostButtonCls} !px-2 !py-0.5 text-xs`} onClick={() => setEditing(true)}>
+              Edit
+            </button>
+          )}
+        </div>
       </div>
 
-      {editing ? (
-        <div className="space-y-2">
-          <textarea
-            className="h-56 w-full rounded-sm border border-line bg-surface p-2 font-mono text-sm"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            autoFocus
-          />
-          <div className="flex gap-2">
-            <button className={buttonCls} onClick={save}>Save</button>
-            <button
-              className={ghostButtonCls}
-              onClick={() => {
-                setDraft(brief.content);
-                setEditing(false);
-              }}
-            >
-              Cancel
-            </button>
+      <div className={boxBodyCls}>
+        {editing ? (
+          <div className="space-y-2">
+            <textarea
+              className={`${inputCls} h-56 w-full font-mono`}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                className={ghostButtonCls}
+                onClick={() => {
+                  setDraft(brief.content);
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </button>
+              <button className={buttonCls} onClick={save}>Save brief</button>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div>
-          {brief.content ? (
-            <pre className="whitespace-pre-wrap font-sans text-sm text-text">
-              {brief.content}
-            </pre>
-          ) : (
-            <p className="text-sm text-muted">No brief yet. Describe the idea, requirements and definition of done.</p>
-          )}
-          <button className={`${ghostButtonCls} mt-3`} onClick={() => setEditing(true)}>
-            Edit brief
-          </button>
-        </div>
-      )}
+        ) : brief.content ? (
+          <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-text">{brief.content}</pre>
+        ) : (
+          <p className="text-sm text-muted">
+            No brief yet. Describe the idea, requirements and definition of done.
+          </p>
+        )}
+      </div>
     </section>
   );
 }

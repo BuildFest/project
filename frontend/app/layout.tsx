@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
+import TopBar from "@/components/TopBar";
 import "./globals.css";
 
 // Body: Barlow — slightly rounded grotesk from road/signage lettering.
@@ -9,7 +10,7 @@ const body = Barlow({
   weight: ["400", "500", "600"],
 });
 
-// Display: Barlow Condensed — pit-board / timing-tower headings.
+// Display: Barlow Condensed — used only for the wordmark.
 const display = Barlow_Condensed({
   variable: "--font-display-face",
   subsets: ["latin"],
@@ -34,7 +35,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${body.variable} ${display.variable} ${code.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <TopBar />
+        {children}
+      </body>
     </html>
   );
 }

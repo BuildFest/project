@@ -1,36 +1,41 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   Pit Crew theme — "Pit Wall"
-   Inspired by motorsport pit walls and live-timing screens: carbon/asphalt
-   surfaces, one signal-orange brand color, and status colors that borrow
-   racing flag + timing meanings so they read at a glance.
-   Dark-only for now. Change values here; components use the token names.
+   Pit Crew theme — "Garage"
+   Cool, soft dark greys in the spirit of GitHub and Discord (never pure
+   black, never pure white), boxy panels with header strips, one muted
+   orange brand color, and GitHub-style status colors developers already
+   know. Change values here; components use the token names.
    ========================================================================== */
 
 :root {
-  /* Surfaces — warm carbon, not default zinc */
-  --pc-bg: #0f100e;
-  --pc-surface: #171815;
-  --pc-raised: #20211d;
-  --pc-line: #2d2e29;
-  --pc-line-strong: #45463f;
+  /* Surfaces — layered cool greys */
+  --pc-bg: #111418;         /* page */
+  --pc-surface: #171b21;    /* boxes */
+  --pc-raised: #1f242c;     /* box headers, inputs, hover */
+  --pc-line: #2d333c;       /* borders */
+  --pc-line-strong: #434b56;
 
-  /* Text — bone white, not pure white */
-  --pc-text: #ecebe4;
-  --pc-muted: #9d9b91;
-  --pc-faint: #6d6c64;
+  /* Text — soft, not pure white */
+  --pc-header: #f0f2f4;
+  --pc-text: #dde1e6;
+  --pc-muted: #939ca7;
+  --pc-faint: #6b737e;
 
-  /* Brand — signal orange (pit board / safety orange) */
-  --pc-signal: #ff5a1f;
-  --pc-signal-ink: #160802;
+  /* Brand — muted pit-lane orange (buttons, logo mark) */
+  --pc-signal: #c4551f;
+  --pc-signal-hover: #d0602a;
+  --pc-signal-ink: #ffffff;
 
-  /* Status — flag & timing-screen meanings */
-  --pc-green: #3fd17a;  /* green flag / personal best: complete, on track */
-  --pc-blue: #4da3ff;   /* on track, running: in progress */
-  --pc-yellow: #f5c518; /* yellow flag: caution, at risk, slipping */
-  --pc-red: #ff4d4d;    /* red flag: blocked, critical */
-  --pc-purple: #b980ff; /* purple sector: ahead of plan — use sparingly */
+  /* Links & focus — familiar developer blue */
+  --pc-link: #58a6ff;
+
+  /* Status — GitHub-style semantics */
+  --pc-green: #3fb950;  /* complete, on track */
+  --pc-blue: #4493f8;   /* in progress */
+  --pc-yellow: #d29922; /* at risk, slipping */
+  --pc-red: #f85149;    /* blocked, critical */
+  --pc-purple: #a371f7; /* ahead of plan — use sparingly */
 }
 
 @theme inline {
@@ -43,7 +48,10 @@
   --color-muted: var(--pc-muted);
   --color-faint: var(--pc-faint);
   --color-signal: var(--pc-signal);
+  --color-signal-hover: var(--pc-signal-hover);
   --color-signal-ink: var(--pc-signal-ink);
+  --color-header: var(--pc-header);
+  --color-link: var(--pc-link);
   --color-green: var(--pc-green);
   --color-blue: var(--pc-blue);
   --color-yellow: var(--pc-yellow);
@@ -66,11 +74,11 @@ body {
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--pc-signal) 35%, transparent);
+  background: color-mix(in oklab, var(--pc-link) 35%, transparent);
 }
 
 :focus-visible {
-  outline: 2px solid var(--pc-signal);
+  outline: 2px solid var(--pc-link);
   outline-offset: 1px;
 }
 

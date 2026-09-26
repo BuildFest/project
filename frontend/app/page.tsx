@@ -2,126 +2,80 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { createProject, listProjects } from "@/lib/api";
+import { listProjects } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
-
-// "Rameez @rameez-gh, Divij @divij" -> [{display_name, github_login}]
-function parseTeam(raw: string) {
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((entry) => {
-      const [name, login] = entry.split("@").map((s) => s.trim());
-      return { display_name: name || login, github_login: login || null };
-    });
-}
+import { boxCls, boxHeaderCls, boxTitleCls, buttonCls, formatDate } from "@/lib/ui";
 
 export default function Home() {
-  const [workspaces, setWorkspaces] = useState<ProjectWorkspace[]>([]);
-  const [name, setName] = useState("");
-  const [prefix, setPrefix] = useState("PC");
-  const [team, setTeam] = useState("");
-  const [deadline, setDeadline] = useState("");
-  const [brief, setBrief] = useState("");
+  // undefined = still loading from storage
+  const [workspaces, setWorkspaces] = useState<ProjectWorkspace[] | undefined>(undefined);
 
   useEffect(() => {
     listProjects().then(setWorkspaces);
   }, []);
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    await createProject({
-      name: name.trim(),
-      task_key_prefix: prefix.trim().toUpperCase(),
-      deadline_at: deadline ? new Date(deadline).toISOString() : null,
-      members: parseTeam(team),
-      brief,
-    });
-    setWorkspaces(await listProjects());
-    setName("");
-    setTeam("");
-    setDeadline("");
-    setBrief("");
-  }
-
-  const input =
-    "w-full rounded-sm border border-line bg-surface p-2 text-sm";
-  const label = "block font-display text-xs font-semibold uppercase tracking-[0.12em] text-muted";
-
   return (
-    <main className="mx-auto max-w-2xl space-y-8 p-8">
-      <header>
-        <h1 className="font-display text-5xl font-bold uppercase tracking-wide leading-none border-l-4 border-signal pl-3">Pit Crew</h1>
-        <p className="text-sm text-muted">
-          Your plan, connected to what&apos;s actually happening in the repo.
-        </p>
-      </header>
+    <main className="mx-auto w-full max-w-4xl px-6 py-8">
+      <div className="mb-6 flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-header">Projects</h1>
+          <p className="text-sm text-muted">
+            Your plan, connected to what&apos;s actually happening in the repo.
+          </p>
+        </div>
+        <Link href="/new" className={buttonCls}>New project</Link>
+      </div>
 
-      <form
-        onSubmit={handleCreate}
-        className="space-y-3 rounded-sm border border-line bg-surface p-4"
-      >
-        <h2 className="font-display text-lg font-semibold uppercase tracking-wider">New project</h2>
-
-        <div className="flex gap-3">
-          <label className={`${label} flex-1`}>
-            Project name
-            <input className={`${input} mt-1`} placeholder="Pit Crew" value={name}
-              onChange={(e) => setName(e.target.value)} required />
-          </label>
-          <label className={`${label} w-28`}>
-            Task prefix
-            <input className={`${input} mt-1 uppercase`} placeholder="PC" value={prefix}
-              onChange={(e) => setPrefix(e.target.value)}
-              pattern="[A-Za-z][A-Za-z0-9]{0,9}" title="Letters/numbers, starts with a letter, max 10"
-              required />
-          </label>
+      <section className={boxCls}>
+        <div className={boxHeaderCls}>
+          <h2 className={boxTitleCls}>Your projects</h2>
+          <span className="text-xs text-muted">{workspaces?.length ?? ""}</span>
         </div>
 
-        <label className={label}>
-          Team (name @github-username, comma-separated)
-          <input className={`${input} mt-1`} placeholder="Rameez @rameez, Divij @divij" value={team}
-            onChange={(e) => setTeam(e.target.value)} />
-        </label>
-
-        <label className={label}>
-          Deadline / target milestone
-          <input className={`${input} mt-1`} type="datetime-local" value={deadline}
-            onChange={(e) => setDeadline(e.target.value)} required />
-        </label>
-
-        <label className={label}>
-          Project brief (markdown)
-          <textarea className={`${input} mt-1 h-32`} value={brief}
-            onChange={(e) => setBrief(e.target.value)} />
-        </label>
-
-        <button className="rounded-sm bg-signal px-4 py-2 text-sm text-signal-ink">
-          Create project
-        </button>
-      </form>
-
-      <section>
-        <h2 className="mb-2 font-display text-lg font-semibold uppercase tracking-wider">Projects</h2>
-        {workspaces.length === 0 && (
-          <p className="text-sm text-muted">No projects yet — create one above.</p>
+        {workspaces === undefined ? (
+          <p className="px-4 py-8 text-center text-sm text-muted">Loading…</p>
+        ) : workspaces.length === 0 ? (
+          <div className="px-4 py-12 text-center">
+            <p className="font-semibold text-header">No projects yet</p>
+            <p className="mt-1 text-sm text-muted">Create a project to write your plan and track it against GitHub.</p>
+            <Link href="/new" className={`${buttonCls} mt-4 inline-block`}>Create your first project</Link>
+          </div>
+        ) : (
+          <ul>
+            {workspaces.map(({ project, members, tasks }) => {
+              const active = tasks.filter((t) => !t.archived);
+              const done = active.filter((t) => t.plan_status === "complete").length;
+              const pct = active.length ? Math.round((done / active.length) * 100) : 0;
+              return (
+                <li key={project.project_id} className="border-b border-line last:border-b-0">
+                  <Link href={`/projects/${project.project_id}`}
+                    className="flex items-center justify-between gap-6 px-4 py-3 hover:bg-raised">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-link">{project.name}</span>
+                        <span className="rounded-full border border-line px-2 font-mono text-xs text-muted">
+                          {project.task_key_prefix}
+                        </span>
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted">
+                        {members.map((m) => m.display_name).join(", ") || "No team yet"}
+                        {" · "}due {formatDate(project.deadline_at)}
+                      </div>
+                    </div>
+                    <div className="w-36 shrink-0">
+                      <div className="mb-1 text-right text-xs text-muted">
+                        {done}/{active.length} tasks
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-line">
+                        <div className="h-full rounded-full bg-green" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
         )}
-        {workspaces.map(({ project, members }) => (
-          <Link key={project.project_id} href={`/projects/${project.project_id}`}
-            className="mb-2 block rounded-sm border border-line p-3 hover:border-signal">
-            <div className="font-medium">
-              {project.name}{" "}
-              <span className="ml-1 rounded-sm border border-line px-1.5 py-0.5 font-mono text-xs text-muted">
-                {project.task_key_prefix}
-              </span>
-            </div>
-            <div className="text-sm text-muted">
-              {members.map((m) => m.display_name).join(", ") || "No team yet"}
-              {project.deadline_at && ` · due ${new Date(project.deadline_at).toLocaleString()}`}
-            </div>
-          </Link>
-        ))}
       </section>
     </main>
   );

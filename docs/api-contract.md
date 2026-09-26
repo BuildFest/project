@@ -267,12 +267,15 @@ Called by GitHub, not by the frontend. It takes the raw payload plus the
 calls). Analysis still happens after the response, never inline (tech doc §3).
 A delivery that fails is stored as `failed` and GitHub's **Redeliver** retries it.
 
-### 4.5 📝 `GET /projects/:projectId/events`
-Normalized activity, newest first, cursor-paginated.
+### 4.5 ✅ `GET /projects/:projectId/events`
+Normalized GitHub activity. Every event carries `seq`: a number that only
+increases, in the order events were stored.
 
-Query: `branch?`, `task_id?` (events linked to that task, via
-`event_task_links` that aren't rejected), `limit?` (default 50, max 200),
-`cursor?`.
+Filters (both modes): `branch?`, `task_id?` (events linked to that task via
+`event_task_links` that aren't rejected).
+
+**Browse mode** (dashboard, default): newest first by `occurred_at`.
+Query: `limit?` (default 50, max 200), `cursor?`.
 
 → `200 Page<GithubEvent>`
 
@@ -282,6 +285,15 @@ interface Page<T> {
   next_cursor: string | null;  // opaque; pass back as ?cursor=
 }
 ```
+
+**Consumer mode** (Person 2's analyzers): `?after_seq=N` returns events with
+`seq > N`, ascending. Query: `limit?` (default 200, max 500). Store
+`next_after_seq` and pass it back next time; no event is ever skipped, even
+backfilled ones with old `occurred_at`.
+
+→ `200 { items: GithubEvent[]; next_after_seq: number; has_more: boolean }`
+
+Start from `after_seq=0`. `cursor` and `after_seq` can't be combined (`400`).
 
 ### 4.6 📝 `GET /projects/:projectId/branches`
 → `200 BranchState[]`, active first.

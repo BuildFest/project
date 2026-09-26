@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withTransaction, type Db, type Queryable } from "../db.js";
 import { newId } from "../ids.js";
 import { pgErrorToHttp } from "./errors.js";
+import { registerEventRoutes } from "./events.js";
 import { notFound, parseBody } from "./http.js";
 import { registerIngestionRoutes } from "./ingestion.js";
 import { registerIntelligenceRoutes } from "./intelligence.js";
@@ -198,6 +199,10 @@ export function createApp(db: Db, onEventsIngested?: (projectIds: string[]) => v
   // ---- project intelligence (src/api/intelligence.ts) -----------------------
 
   registerIntelligenceRoutes(app, db);
+
+  // ---- events (src/api/events.ts) ------------------------------------------
+
+  registerEventRoutes(app, db);
 
   return app;
 }

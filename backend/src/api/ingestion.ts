@@ -94,8 +94,15 @@ async function ingestDelivery(tx: pg.PoolClient, d: Delivery): Promise<IngestRes
   let inserted = 0;
 
   // The same GitHub repo can be connected to more than one project; each gets
-  // its own copy of the events.
-  for (const repo of d.repos) {
+  // its own copy of the events. Sorted so concurrent deliveries take the
+  // per-project locks below in the same order (no deadlocks).
+  const repos = [...d.repos].sort((a, b) => a.project_id.localeCompare(b.project_id));
+  for (const repo of repos) {
+    // Serializes event writers per project so seq order == commit order and
+    // ?after_seq readers never skip a late-committing row (see the seq migration).
+    if (events.length > 0) {
+      await tx.query("select pg_advisory_xact_lock(hashtext('events:' || $1))", [repo.project_id]);
+    }
     let latest: string | null = null;
     for (const event of events) {
       const { rowCount } = await tx.query(
@@ -162,7 +169,10 @@ export function registerIngestionRoutes(
       return rows[0];
     });
 
-    const base = (process.env.PUBLIC_BASE_URL ?? new URL(c.req.url).origin).replace(/\/$/, "");
+    // Tolerate PUBLIC_BASE_URL set as a bare host ("x.up.railway.app"): GitHub
+    // rejects a payload URL without a scheme.
+    let base = (process.env.PUBLIC_BASE_URL ?? new URL(c.req.url).origin).replace(/\/+$/, "");
+    if (!/^https?:\/\//.test(base)) base = `https://${base}`;
     return c.json({ repository, webhook_url: `${base}/webhooks/github`, webhook_secret: secret }, 201);
   });
 

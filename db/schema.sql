@@ -2,7 +2,7 @@
 --
 -- frontend/lib/types.ts mirrors this file. Column names are snake_case and
 -- match the TS interfaces 1:1; columns that don't appear in types.ts are
--- backend-only (secrets refs, S3 keys, fingerprints, audit timestamps).
+-- backend-only (secrets refs, fingerprints, audit timestamps).
 --
 -- Tables are grouped by the three layers from the tech doc (§2, §5), and the
 -- layers never write into each other:
@@ -190,8 +190,35 @@ create index task_dependencies_depends_on_idx on task_dependencies (depends_on_t
 create function task_dependencies_no_cycle() returns trigger
 language plpgsql as $$
 begin
-  -- TODO: raise an exception if NEW.task_id is reachable by following
-  -- depends_on_task_id edges starting from NEW.depends_on_task_id.
+  -- Self-dependency is the CHECK constraint's job (400), not a cycle (409).
+  -- BEFORE triggers run ahead of CHECKs, so step aside explicitly.
+  if new.task_id = new.depends_on_task_id then
+    return new;
+  end if;
+
+  -- Serialize dependency writes per project, otherwise two concurrent
+  -- inserts (A->B, B->A) each see an acyclic graph and both commit.
+  perform pg_advisory_xact_lock(hashtext('task_dependencies:' || new.project_id));
+
+  -- Cycle iff NEW.task_id is reachable from NEW.depends_on_task_id. On UPDATE
+  -- the row being replaced is still visible, so exclude it from the walk.
+  if exists (
+    with recursive reachable(task_id) as (
+      select new.depends_on_task_id
+      union
+      select d.depends_on_task_id
+        from task_dependencies d
+        join reachable r on d.task_id = r.task_id
+       where (d.task_id, d.depends_on_task_id)
+             is distinct from (old.task_id, old.depends_on_task_id)
+    )
+    select 1 from reachable where task_id = new.task_id
+  ) then
+    raise exception 'dependency would create a cycle'
+      using errcode = 'check_violation',
+            constraint = 'task_dependencies_no_cycle';
+  end if;
+
   return new;
 end $$;
 
@@ -230,7 +257,7 @@ create table repositories (
   connected_at           timestamptz,
   last_backfill_at       timestamptz,
   last_event_at          timestamptz,
-  webhook_secret_ref     text,  -- AWS Secrets Manager name/ARN. Never the secret itself.
+  webhook_secret_ref     text,  -- reference to wherever the secret is stored. Never the secret itself.
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now(),
   unique (project_id, repository_id),
@@ -256,7 +283,7 @@ create table webhook_deliveries (
   repository_id      text references repositories on delete cascade,
   github_event       text not null,     -- X-GitHub-Event header, e.g. "pull_request"
   action             text,              -- payload.action, e.g. "opened"
-  payload_s3_key     text,
+  payload            jsonb,             -- raw delivery body, stored inline (hackathon scale, see §2.12)
   status             text not null default 'received'
                        check (status in ('received', 'normalized', 'ignored', 'failed')),
   error              text,
@@ -294,7 +321,6 @@ create table github_events (
   commit             jsonb,  -- { sha, message, author, url }
   pull_request       jsonb,  -- { number, title, state, head_branch, base_branch, url, merged }
   changed_files      text[] not null default '{}',
-  payload_s3_key     text,
   schema_version     integer not null default 1,
   unique (project_id, event_id),
   unique (repository_id, event_type, external_event_id),

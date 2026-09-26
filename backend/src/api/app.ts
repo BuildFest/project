@@ -1,0 +1,206 @@
+import { Hono, type Context } from "hono";
+import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
+import { z } from "zod";
+import { withTransaction, type Db, type Queryable } from "../db.js";
+import { newId } from "../ids.js";
+import { pgErrorToHttp } from "./errors.js";
+import {
+  CreateDependencyInput,
+  CreateMilestoneInput,
+  CreateProjectInput,
+  CreateTaskInput,
+  UpdateBriefInput,
+  UpdateMilestoneInput,
+  UpdateProjectInput,
+  UpdateTaskInput,
+} from "./inputs.js";
+import { loadWorkspaces } from "./workspace.js";
+
+async function parseBody<S extends z.ZodType>(c: Context, schema: S): Promise<z.output<S>> {
+  let json: unknown;
+  try {
+    json = await c.req.json();
+  } catch {
+    throw new HTTPException(400, { message: "request body must be JSON" });
+  }
+  return schema.parse(json);
+}
+
+function notFound(what: string): never {
+  throw new HTTPException(404, { message: `${what} not found` });
+}
+
+/**
+ * UPDATE ... SET only the keys present in `patch`. Column names come from a
+ * zod-parsed object (unknown keys stripped), and table/id column are literals
+ * at every call site, so nothing user-controlled is interpolated.
+ */
+async function updateRow(
+  db: Queryable,
+  table: "projects" | "milestones" | "tasks",
+  idColumn: "project_id" | "milestone_id" | "task_id",
+  projectId: string,
+  id: string,
+  patch: Record<string, unknown>,
+) {
+  const keys = Object.keys(patch).filter((k) => patch[k] !== undefined);
+  if (keys.length === 0) throw new HTTPException(400, { message: "no fields to update" });
+  const sets = keys.map((k, i) => `${k} = $${i + 3}`).join(", ");
+  const { rows } = await db.query(
+    `update ${table} set ${sets} where project_id = $1 and ${idColumn} = $2 returning *`,
+    [projectId, id, ...keys.map((k) => patch[k])],
+  );
+  return rows[0] ?? null;
+}
+
+export function createApp(db: Db) {
+  const app = new Hono();
+
+  app.use("*", cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:3000" }));
+
+  app.onError((err, c) => {
+    if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+    if (err instanceof z.ZodError) return c.json({ error: "invalid request", issues: err.issues }, 400);
+    const mapped = pgErrorToHttp(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
+    console.error(err);
+    return c.json({ error: "internal error" }, 500);
+  });
+
+  app.get("/health", (c) => c.json({ ok: true }));
+
+  // ---- projects ------------------------------------------------------------
+
+  app.get("/projects", async (c) => {
+    const { rows } = await db.query("select project_id from projects where status = 'active'");
+    return c.json(await loadWorkspaces(db, rows.map((r) => r.project_id)));
+  });
+
+  app.get("/projects/:projectId", async (c) => {
+    const [workspace] = await loadWorkspaces(db, [c.req.param("projectId")]);
+    return workspace ? c.json(workspace) : notFound("project");
+  });
+
+  app.post("/projects", async (c) => {
+    const input = await parseBody(c, CreateProjectInput);
+    const projectId = newId("proj");
+    const members = input.members.map((m, i) => ({
+      ...m,
+      member_id: newId("mem"),
+      access_level: i === 0 ? "owner" : "editor",
+    }));
+    const creator = members[0]?.member_id ?? "system";
+
+    const workspace = await withTransaction(db, async (tx) => {
+      await tx.query(
+        `insert into projects (project_id, name, description, task_key_prefix, created_by, deadline_at, timezone)
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+        [projectId, input.name, input.description ?? null, input.task_key_prefix, creator, input.deadline_at, input.timezone],
+      );
+      for (const m of members) {
+        await tx.query(
+          `insert into project_members (member_id, project_id, display_name, role_label, github_login, access_level)
+           values ($1, $2, $3, $4, $5, $6)`,
+          [m.member_id, projectId, m.display_name, m.role_label ?? null, m.github_login, m.access_level],
+        );
+      }
+      await tx.query(
+        `insert into project_briefs (project_id, content, updated_by) values ($1, $2, $3)`,
+        [projectId, input.brief, members[0]?.member_id ?? null],
+      );
+      const [created] = await loadWorkspaces(tx, [projectId]);
+      return created;
+    });
+    return c.json(workspace, 201);
+  });
+
+  app.patch("/projects/:projectId", async (c) => {
+    const patch = await parseBody(c, UpdateProjectInput);
+    const id = c.req.param("projectId");
+    return c.json((await updateRow(db, "projects", "project_id", id, id, patch)) ?? notFound("project"));
+  });
+
+  app.put("/projects/:projectId/brief", async (c) => {
+    const input = await parseBody(c, UpdateBriefInput);
+    const { rows } = await db.query(
+      `update project_briefs set content = $2, content_format = $3, updated_by = $4
+        where project_id = $1 returning *`,
+      [c.req.param("projectId"), input.content, input.content_format, input.updated_by],
+    );
+    return c.json(rows[0] ?? notFound("project"));
+  });
+
+  // ---- milestones ----------------------------------------------------------
+
+  app.post("/projects/:projectId/milestones", async (c) => {
+    const input = await parseBody(c, CreateMilestoneInput);
+    const { rows } = await db.query(
+      `insert into milestones (milestone_id, project_id, name, description, target_at, sort_order)
+       values ($1, $2, $3, $4, $5, coalesce($6, 0)) returning *`,
+      [newId("ms"), c.req.param("projectId"), input.name, input.description ?? null, input.target_at ?? null, input.sort_order ?? null],
+    );
+    return c.json(rows[0], 201);
+  });
+
+  app.patch("/projects/:projectId/milestones/:milestoneId", async (c) => {
+    const patch = await parseBody(c, UpdateMilestoneInput);
+    const row = await updateRow(db, "milestones", "milestone_id", c.req.param("projectId"), c.req.param("milestoneId"), patch);
+    return c.json(row ?? notFound("milestone"));
+  });
+
+  // ---- tasks ---------------------------------------------------------------
+
+  app.post("/projects/:projectId/tasks", async (c) => {
+    const input = await parseBody(c, CreateTaskInput);
+    const projectId = c.req.param("projectId");
+
+    // Key allocation and insert share a transaction: if the insert fails, the
+    // counter bump rolls back too and no task number is burned.
+    const task = await withTransaction(db, async (tx) => {
+      const { rows: [{ task_key }] } = await tx.query("select allocate_task_key($1) as task_key", [projectId]);
+      if (!task_key) notFound("project");
+      const { rows } = await tx.query(
+        `insert into tasks (task_id, task_key, project_id, title, description, owner_member_id, priority, scope,
+                            plan_status, milestone_id, target_at, sort_order)
+         values ($1, $2, $3, $4, $5, $6, coalesce($7, 'medium'), coalesce($8, 'must_have'),
+                 coalesce($9, 'not_started'), $10, $11, coalesce($12, 0))
+         returning *`,
+        [
+          newId("task"), task_key, projectId, input.title, input.description ?? null, input.owner_member_id ?? null,
+          input.priority ?? null, input.scope ?? null, input.plan_status ?? null, input.milestone_id ?? null,
+          input.target_at ?? null, input.sort_order ?? null,
+        ],
+      );
+      return rows[0];
+    });
+    return c.json(task, 201);
+  });
+
+  app.patch("/projects/:projectId/tasks/:taskId", async (c) => {
+    const patch = await parseBody(c, UpdateTaskInput);
+    const row = await updateRow(db, "tasks", "task_id", c.req.param("projectId"), c.req.param("taskId"), patch);
+    return c.json(row ?? notFound("task"));
+  });
+
+  // ---- dependencies --------------------------------------------------------
+
+  app.post("/projects/:projectId/dependencies", async (c) => {
+    const input = await parseBody(c, CreateDependencyInput);
+    const { rows } = await db.query(
+      `insert into task_dependencies (project_id, task_id, depends_on_task_id) values ($1, $2, $3) returning *`,
+      [c.req.param("projectId"), input.task_id, input.depends_on_task_id],
+    );
+    return c.json(rows[0], 201);
+  });
+
+  app.delete("/projects/:projectId/dependencies/:taskId/:dependsOnTaskId", async (c) => {
+    const { rowCount } = await db.query(
+      `delete from task_dependencies where project_id = $1 and task_id = $2 and depends_on_task_id = $3`,
+      [c.req.param("projectId"), c.req.param("taskId"), c.req.param("dependsOnTaskId")],
+    );
+    return rowCount ? c.body(null, 204) : notFound("dependency");
+  });
+
+  return app;
+}

@@ -139,19 +139,20 @@ Body: any of `name`, `description`, `deadline_at`, `timezone`,
 ```
 → `200 ProjectBrief` · `404`
 
-### 2.6 📝 `POST /projects/:projectId/members`
+### 2.6 ✅ `POST /projects/:projectId/members`
 ```ts
 { display_name: string; github_login?: string | null; role_label?: string | null;
   access_level?: "owner" | "editor" | "viewer" }  // default "editor"
 ```
-→ `201 ProjectMember` · `409` duplicate github_login
+→ `201 ProjectMember` · `409` github_login already used in this project
+(case-insensitive) · `404` unknown project
 
-### 2.7 📝 `PATCH /projects/:projectId/members/:memberId`
+### 2.7 ✅ `PATCH /projects/:projectId/members/:memberId`
 Any of `display_name`, `github_login`, `role_label`, `access_level`.
 `github_login` is how GitHub actors are attributed to members, so the plan
-editor should make it easy to fill in.
+editor should make it easy to fill in. `""` or `null` clears it.
 
-→ `200 ProjectMember`
+→ `200 ProjectMember` · `404` unknown member · `409` login taken
 
 ---
 
@@ -205,7 +206,7 @@ plan) or an accepted replan (§5.7) may change it. Analyzers never do
 ### 3.6 ✅ `DELETE /projects/:projectId/dependencies/:taskId/:dependsOnTaskId`
 → `204` · `404`
 
-### 3.7 📝 `POST /projects/:projectId/plan-versions`
+### 3.7 ✅ `POST /projects/:projectId/plan-versions`
 Snapshots the current plan ("Save plan"). The server builds the snapshot from
 the live tables and bumps `project.current_plan_version`. Replan suggestions
 are always relative to a version, so the plan editor should call this after
@@ -215,6 +216,10 @@ the initial plan is set up.
 { summary?: string; member_id?: string }
 ```
 → `201 { project_id, version, source: "initial" | "manual", summary, created_at }`
+· `400` `member_id` isn't in this project · `404` unknown project
+
+The first save is `initial`, later ones `manual`. Each save also adds a
+`plan_change` timeline item ("Plan v2 saved").
 
 ---
 
@@ -243,7 +248,21 @@ events: pushes and pull requests).
 | `502` | GitHub unreachable or erroring |
 
 ### 4.2 ✅ `GET /projects/:projectId/repositories`
-→ `200 Repository[]`, oldest first.
+→ `200 Repository[]`, oldest first. Each repository also carries ingestion
+health, computed on read:
+
+| Field | Meaning |
+|---|---|
+| `last_delivery_at` | Last webhook delivery received (any event, incl. `ping`); `null` if none yet |
+| `failed_deliveries` | Stored deliveries that failed processing (retry them, §4.7) |
+| `ingestion_health` | `waiting` (no delivery yet: webhook not set up?), `degraded` (failed deliveries, or backfill `failed`/`partial`), `live` |
+
+### 4.7 ✅ `POST /projects/:projectId/repositories/:repositoryId/deliveries/retry`
+Re-runs this repository's failed deliveries, oldest first, from the payloads
+we stored (e.g. after a fix is deployed). Retried events go through the same
+path as live ones, including task linking and changed-files refresh.
+→ `200 { retried: number; succeeded: number; still_failed: number }` · `404`
+if the repository isn't in this project. Safe to repeat.
 
 ### 4.3 ✅ `POST /projects/:projectId/repositories/:repositoryId/backfill`
 Imports what happened before the webhook existed, or while deliveries were
@@ -440,14 +459,30 @@ type PlanChange =
 
 ## 6. Timeline and decisions
 
-### 6.1 📝 `GET /projects/:projectId/timeline` — owner A
-Query: `limit?`, `cursor?`, `task_id?`. → `200 Page<TimelineItem>`, newest first.
+### 6.1 ✅ `GET /projects/:projectId/timeline` — owner A
+Query: `limit?` (default 50, max 200), `cursor?`, `task_id?`.
+→ `200 Page<TimelineItem>`, newest first. `404` unknown project.
 
-### 6.2 📝 `GET /projects/:projectId/decisions` / `POST /projects/:projectId/decisions` — owner A
+One feed for everything: GitHub activity (`kind: "github_event"`), plan saves
+and accepted replans (`plan_change`), decisions, and B's signal/collision/replan
+items. Every item points at its source (`entity_type`, `entity_id`).
+
+GitHub rows: pushes (summary = head commit's first line), branch
+created/deleted, and PR opened/merged/closed/reopened. Webhook commits are part
+of their push and get no row; backfilled commits (no push) do. Titles are
+ready to render, e.g. `"Pranshul-13 opened PR #4: PC-1: Webhook ingestion"`.
+
+`task_id` matches items whose `related_task_ids` include the task. For GitHub
+items that includes tasks linked later through non-rejected `event_task_links`,
+so `related_task_ids` in the response is always current.
+
+### 6.2 ✅ `GET /projects/:projectId/decisions` / `POST /projects/:projectId/decisions` — owner A
 ```ts
 { title: string; body?: string; member_id: string; related_task_ids?: string[] }
 ```
-→ `200 Decision[]` / `201 Decision`
+→ `200 Decision[]` (newest first) / `201 Decision` · `400` member or tasks
+not in this project · `404` unknown project. Each decision also adds a
+`decision` timeline item.
 
 `Decision` isn't in `types.ts` yet. Its fields are `decision_id`, `project_id`,
 `title`, `body`, `decided_by`, `decided_at`, `related_task_ids`, `suggestion_id`.

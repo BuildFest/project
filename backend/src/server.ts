@@ -9,6 +9,7 @@ import { createApp } from "./api/app.js";
 import { requireEnv } from "./config.js";
 import { createPool } from "./db.js";
 import { createCompareScheduler } from "./ingestion/compare.js";
+import { projectEventsToTimeline } from "./ingestion/timeline.js";
 
 // Railway supplies environment variables directly; local development uses
 // backend/.env when present. The file is gitignored.
@@ -35,6 +36,12 @@ const analyzeProjects = (projectIds: string[]) => {
 
 // After each push to a feature branch, recompute its changed files (debounced).
 const refreshBranches = createCompareScheduler(db);
+
+// Idempotent catch-up: events stored before the timeline projection existed
+// (or while it was broken) get their timeline rows.
+void projectEventsToTimeline(db)
+  .then((n) => n > 0 && console.log(`timeline: projected ${n} earlier events`))
+  .catch((error) => console.error("timeline catch-up failed", error));
 
 serve({ fetch: createApp(db, analyzeProjects, refreshBranches).fetch, port }, (info) => {
   console.log(`Pit Crew API listening on port ${info.port}`);

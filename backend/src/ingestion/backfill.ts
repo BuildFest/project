@@ -3,6 +3,7 @@ import { githubGet, githubList } from "../github.js";
 import { changedFilesOf, storeChangedFiles, type CompareResponse } from "./compare.js";
 import { normalizePullRequest, type NormalizedEvent, type PullRequestPayload } from "./normalize.js";
 import { recordEvents } from "./record.js";
+import { projectEventsToTimeline } from "./timeline.js";
 
 // Imports what happened before the webhook existed (or while deliveries were
 // failing) from GitHub's REST API: pull requests, branches, branch-unique
@@ -105,6 +106,8 @@ export async function runBackfill(db: Db, repositoryId: string, fetchImpl: Fetch
   ]);
   try {
     const stats = await backfillStages(db, repo, fetchImpl);
+    // Catch-up for events stored before timeline projection existed.
+    await projectEventsToTimeline(db, { projectId: repo.project_id });
     const partial = stats.failures.length > 0;
     await db.query(
       `update repositories set last_backfill_at = now(), backfill_status = $2, backfill_error = $3

@@ -21,7 +21,7 @@ Owners follow tech doc §4: **A** = event infrastructure and plan CRUD,
 ## 1. Conventions
 
 **Base URL.** Local: `http://localhost:8787` (`npm run dev` in `backend/`).
-Deployed: API Gateway stage URL, same paths.
+Deployed: Railway service URL, same paths.
 
 **JSON.** Requests and responses are `application/json`. Field names are
 `snake_case` and match the database columns, so responses use the
@@ -74,10 +74,12 @@ interface ApiError {
 
 Error bodies never contain table names, constraint names, or SQL.
 
-> **Open:** the dependency-cycle trigger (`P0001`) will return either `409`
-> or `400` with `code: "cycle"`. This depends on `pgErrorToHttp()` in
-> `backend/src/api/errors.ts`, which isn't written yet. Until then,
-> database-rule violations return `500`.
+Database-rule violations are mapped in `backend/src/api/errors.ts`
+(`pgErrorToHttp()`); `code` carries the Postgres SQLSTATE (`23505` duplicate,
+`23503` bad reference, `23514` rule violation, `22007` bad timestamp).
+
+> **Open:** the dependency-cycle check isn't enforced yet. When it lands it
+> will return `409` with `code: "cycle"`.
 
 ---
 

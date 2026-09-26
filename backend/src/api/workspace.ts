@@ -21,14 +21,14 @@ export async function loadWorkspaces(db: Queryable, projectIds: string[]): Promi
   if (projectIds.length === 0) return [];
   const ids = [projectIds];
 
-  const [projects, members, briefs, milestones, tasks, dependencies] = await Promise.all([
-    db.query("select * from projects where project_id = any($1) order by created_at, project_id", ids),
-    db.query("select * from project_members where project_id = any($1) order by joined_at, member_id", ids),
-    db.query("select * from project_briefs where project_id = any($1)", ids),
-    db.query("select * from milestones where project_id = any($1) order by sort_order, created_at", ids),
-    db.query("select * from tasks where project_id = any($1) order by sort_order, created_at", ids),
-    db.query("select * from task_dependencies where project_id = any($1) order by created_at", ids),
-  ]);
+  // Sequential, not Promise.all: db may be a single transaction client, which
+  // can't run concurrent queries (pg@9 turns that into an error).
+  const projects = await db.query("select * from projects where project_id = any($1) order by created_at, project_id", ids);
+  const members = await db.query("select * from project_members where project_id = any($1) order by joined_at, member_id", ids);
+  const briefs = await db.query("select * from project_briefs where project_id = any($1)", ids);
+  const milestones = await db.query("select * from milestones where project_id = any($1) order by sort_order, created_at", ids);
+  const tasks = await db.query("select * from tasks where project_id = any($1) order by sort_order, created_at", ids);
+  const dependencies = await db.query("select * from task_dependencies where project_id = any($1) order by created_at", ids);
 
   const byProject = (rows: Row[]) => {
     const map = new Map<string, Row[]>();

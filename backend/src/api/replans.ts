@@ -188,12 +188,14 @@ export function registerReplanRoutes(app: Hono, db: Db) {
 
     const result = await withTransaction(db, async (tx) => {
       await requireMember(tx, projectId, member_id);
-      const suggestion = await lockProposed(tx, projectId, suggestionId);
-
       const { rows: [project] } = await tx.query(
         "select current_plan_version from projects where project_id = $1 for update",
         [projectId],
       );
+      // Serialize accepts per project before locking an individual suggestion.
+      // A consistent lock order prevents two concurrent accepts from each
+      // holding one suggestion row while trying to supersede the other.
+      const suggestion = await lockProposed(tx, projectId, suggestionId);
       if (project.current_plan_version !== suggestion.based_on_plan_version) {
         conflict(
           `the plan has changed since this suggestion was made ` +

@@ -176,6 +176,28 @@ describe("POST .../replans/:suggestionId/accept", () => {
     expect(task.rows[0].priority).toBe("high");
   });
 
+  it("serializes concurrent accepts without deadlocking", async () => {
+    const s = await seedProject();
+    const first = await addSuggestion(s, [
+      { op: "update_task", task_id: s.auth, changes: { priority: "critical" } },
+    ]);
+    const second = await addSuggestion(s, [
+      { op: "update_task", task_id: s.auth, changes: { priority: "low" } },
+    ]);
+
+    const responses = await Promise.all([
+      call("POST", `/projects/${s.project}/replans/${first}/accept`, { member_id: s.member }),
+      call("POST", `/projects/${s.project}/replans/${second}/accept`, { member_id: s.member }),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+
+    const suggestions = await pool.query(
+      "select status from replan_suggestions where suggestion_id = any($1) order by status",
+      [[first, second]],
+    );
+    expect(suggestions.rows.map((row) => row.status)).toEqual(["accepted", "superseded"]);
+  });
+
   it("rolls back every change when one of them fails", async () => {
     const s = await seedProject();
     const id = await addSuggestion(s, [

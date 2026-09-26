@@ -5,7 +5,6 @@ import { requireEnv } from "../config.js";
 import { withTransaction, type Db } from "../db.js";
 import { githubHeaders } from "../github.js";
 import { newId } from "../ids.js";
-import { applyToBranchState } from "../ingestion/branches.js";
 import type { BranchRef } from "../ingestion/compare.js";
 import {
   normalizePullRequest,
@@ -14,6 +13,7 @@ import {
   type PullRequestPayload,
   type PushPayload,
 } from "../ingestion/normalize.js";
+import { recordEvents } from "../ingestion/record.js";
 import { verifyGitHubSignature } from "../ingestion/verify.js";
 import { notFound, parseBody } from "./http.js";
 import { ConnectRepositoryInput } from "./inputs.js";
@@ -92,36 +92,12 @@ async function ingestDelivery(tx: pg.PoolClient, d: Delivery): Promise<IngestRes
 
   // The same GitHub repo can be connected to more than one project; each gets
   // its own copy of the events. Sorted so concurrent deliveries take the
-  // per-project locks below in the same order (no deadlocks).
+  // per-project event locks (inside recordEvents) in the same order.
   const repos = [...d.repos].sort((a, b) => a.project_id.localeCompare(b.project_id));
   for (const repo of repos) {
-    // Serializes event writers per project so seq order == commit order and
-    // ?after_seq readers never skip a late-committing row (see the seq migration).
-    if (events.length > 0) {
-      await tx.query("select pg_advisory_xact_lock(hashtext('events:' || $1))", [repo.project_id]);
-    }
-    let latest: string | null = null;
-    for (const event of events) {
-      const { rowCount } = await tx.query(
-        `insert into github_events (event_id, project_id, repository_id, source, github_delivery_id, external_event_id,
-                                    event_type, actor, occurred_at, branch, commit, pull_request, changed_files)
-         values ($1, $2, $3, 'webhook', $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         on conflict (repository_id, event_type, external_event_id) do nothing`,
-        [
-          newId("event"), repo.project_id, repo.repository_id, d.deliveryId, event.external_event_id,
-          event.event_type, event.actor, event.occurred_at, event.branch, event.commit, event.pull_request,
-          event.changed_files,
-        ],
-      );
-      if (!rowCount) continue; // already known (redelivery overlap or backfill)
-      inserted++;
-      if (!latest || event.occurred_at > latest) latest = event.occurred_at;
-      await applyToBranchState(tx, repo.project_id, repo.repository_id, event);
-      // A new head means the branch's changed files need recomputing.
-      if (event.branch && (event.event_type === "push" || event.event_type === "branch_created")) {
-        pushedBranches.push({ repositoryId: repo.repository_id, branch: event.branch });
-      }
-    }
+    const recorded = await recordEvents(tx, repo, events, "webhook", d.deliveryId);
+    inserted += recorded.inserted;
+    pushedBranches.push(...recorded.pushedBranches);
 
     // Any verified delivery proves the webhook is wired up.
     await tx.query(
@@ -130,7 +106,7 @@ async function ingestDelivery(tx: pg.PoolClient, d: Delivery): Promise<IngestRes
               connected_at = coalesce(connected_at, now()),
               last_event_at = greatest(last_event_at, $2::timestamptz)
         where repository_id = $1`,
-      [repo.repository_id, latest],
+      [repo.repository_id, recorded.latest],
     );
   }
 

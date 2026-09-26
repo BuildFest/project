@@ -61,7 +61,9 @@ export async function applyToBranchState(
   const current = rows[0] ?? null;
 
   let headSha = current?.head_sha ?? null;
-  if (event.event_type === "push") headSha = event.commit?.sha ?? headSha;
+  // Webhook branch_created carries no commit (its push does); a backfilled one
+  // carries the head seen in GitHub's branch listing.
+  if (event.event_type === "push" || event.event_type === "branch_created") headSha = event.commit?.sha ?? headSha;
 
   let openPr = current?.open_pr_number ?? null;
   const prNumber = event.pull_request?.number;

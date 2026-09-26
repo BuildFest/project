@@ -245,9 +245,21 @@ events: pushes and pull requests).
 ### 4.2 ✅ `GET /projects/:projectId/repositories`
 → `200 Repository[]`, oldest first.
 
-### 4.3 📝 `POST /projects/:projectId/repositories/:repositoryId/backfill`
-Imports existing branches, PRs and recent commits. Asynchronous.
-→ `202 { started_at: string }`. Progress shows up as `repository.last_backfill_at`.
+### 4.3 ✅ `POST /projects/:projectId/repositories/:repositoryId/backfill`
+Imports what happened before the webhook existed, or while deliveries were
+failing: every PR (opened, merged/closed), every branch (with its head, its
+branch-unique commits and its `changed_files`), and branches deleted since.
+Asynchronous.
+→ `202 { started_at: string }`. When it finishes, `repository.last_backfill_at`
+updates. A request while a run is in progress returns that run's
+`started_at`. `404` if the repository isn't in this project.
+
+Safe to run any number of times: backfilled facts use the same dedupe keys as
+webhooks (`github_events.source = "backfill"`), so a second run adds nothing.
+Call it once after connecting a repo, and again after any webhook outage.
+
+Not imported yet: the default branch's commit history and exact branch creation
+times (a backfilled `branch_created` uses the branch's oldest unique commit time).
 
 ### 4.4 ✅ `POST /webhooks/github`
 Called by GitHub, not by the frontend. It takes the raw payload plus the

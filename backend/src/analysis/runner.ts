@@ -6,6 +6,7 @@ import { persistAnalysis, type PersistResult } from "./persist.js";
 import { analyzeProject } from "./pipeline.js";
 import { maybeGenerateReplan, type ReplanGenerationResult } from "./replans.js";
 import { withAiProject } from "../ai/audit.js";
+import { notifyPendingPullRequests } from "./preMerge.js";
 
 export interface AnalysisRunOptions { skipLinking?: boolean; skipAi?: boolean }
 export interface AnalysisRunResult extends PersistResult {
@@ -13,6 +14,7 @@ export interface AnalysisRunResult extends PersistResult {
   aiError: string | null;
   replan: ReplanGenerationResult | null;
   replanError: string | null;
+  notes: number;
 }
 
 export async function runAnalysis(db: Db, router: ModelRouter | null, projectId: string, now = new Date(), options: AnalysisRunOptions = {}): Promise<AnalysisRunResult> {
@@ -32,7 +34,10 @@ export async function runAnalysis(db: Db, router: ModelRouter | null, projectId:
     } catch (error) {
       replanError = (error as Error).message;
     }
-    return { ...persisted, aiApplied: result.aiApplied, aiError: result.aiError, replan, replanError };
+    let notes = 0;
+    try { notes = await notifyPendingPullRequests(db, options.skipAi ? null : router, projectId, snapshot, result); }
+    catch (error) { console.error("pre-merge notification failed", { projectId, error }); }
+    return { ...persisted, aiApplied: result.aiApplied, aiError: result.aiError, replan, replanError, notes };
   } finally {
     await lock.query("select pg_advisory_unlock(hashtext('analysis:' || $1))", [projectId]).catch(() => {});
     lock.release();

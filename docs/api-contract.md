@@ -497,6 +497,18 @@ type PlanChange =
   | { op: "update_milestone"; milestone_id: string; changes: { target_at?: string | null; name?: string } };
 ```
 
+### 5.8 ✅ `GET /projects/:projectId/maintainer-notes`
+
+Returns the newest pre-merge coordination notes for the dashboard. These notes
+cover collision risk, incomplete dependencies, task scope and plan alignment;
+they are not code-quality reviews. Query: `limit?` (default 50, max 200).
+
+Each row includes `pull_request_number`, `branch`, optional `task_id`, `note`,
+the grounded `facts`, `evidence_event_ids`, and `generated_by` (`rules` or
+`llm`). One note is stored per PR opened, updated or reopened event.
+
+→ `200 MaintainerNote[]` · `404`
+
 ---
 
 ## 6. Timeline and decisions

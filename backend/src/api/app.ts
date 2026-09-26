@@ -9,6 +9,7 @@ import { pgErrorToHttp } from "./errors.js";
 import { registerBackfillRoutes } from "./backfill.js";
 import { registerBranchRoutes } from "./branches.js";
 import { registerEventRoutes } from "./events.js";
+import { registerCorrectionRoutes } from "./corrections.js";
 import { notFound, parseBody } from "./http.js";
 import { registerIngestionRoutes } from "./ingestion.js";
 import { registerIntelligenceRoutes } from "./intelligence.js";
@@ -282,6 +283,7 @@ export function createApp(
 
   registerIntelligenceRoutes(app, db);
   registerReplanRoutes(app, db);
+  registerCorrectionRoutes(app, db);
 
   // ---- events (src/api/events.ts) ------------------------------------------
 

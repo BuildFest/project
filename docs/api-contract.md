@@ -396,7 +396,7 @@ interface TaskEvidence {
 `blocking_tasks` follows `state.blocking_task_ids` order and omits IDs that no
 longer resolve to a task in the project. `links` and `signals` are newest first.
 
-### 5.3 📝 `PUT /projects/:projectId/tasks/:taskId/override`
+### 5.3 ✅ `PUT /projects/:projectId/tasks/:taskId/override`
 A human corrects the derived status. `effective_status` changes at once, while
 `computed_status` is kept (tech doc §13).
 
@@ -409,11 +409,11 @@ state so the UI can re-confirm.
 
 → `200 DerivedTaskState` · `409 { error, current: DerivedTaskState }`
 
-### 5.4 📝 `DELETE /projects/:projectId/tasks/:taskId/override`
+### 5.4 ✅ `DELETE /projects/:projectId/tasks/:taskId/override`
 Clears the override. `effective_status` falls back to `computed_status`.
 → `200 DerivedTaskState`
 
-### 5.5 📝 Event–task links
+### 5.5 ✅ Event–task links
 - `POST /projects/:projectId/links`. A human links an event to a task:
   `{ event_id, task_id, member_id }` → `201 EventTaskLink` (`method: "manual"`, `status: "confirmed"`)
 - `PATCH /projects/:projectId/links/:linkId`. Confirms or rejects a suggestion:
@@ -422,7 +422,7 @@ Clears the override. `effective_status` falls back to `computed_status`.
 An `llm` link can only become `confirmed` through this endpoint. The
 database rejects a confirmation without a confirmer.
 
-### 5.6 📝 Dismiss a signal or collision
+### 5.6 ✅ Dismiss a signal or collision
 - `PATCH /projects/:projectId/signals/:signalId` `{ status: "dismissed", member_id }` → `200 HealthSignal`
 - `PATCH /projects/:projectId/collisions/:collisionId` `{ status: "dismissed", member_id }` → `200 Collision`
 

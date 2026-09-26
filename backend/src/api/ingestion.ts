@@ -165,7 +165,10 @@ export function registerIngestionRoutes(app: Hono, db: Db) {
       return rows[0];
     });
 
-    const base = (process.env.PUBLIC_BASE_URL ?? new URL(c.req.url).origin).replace(/\/$/, "");
+    // Tolerate PUBLIC_BASE_URL set as a bare host ("x.up.railway.app"): GitHub
+    // rejects a payload URL without a scheme.
+    let base = (process.env.PUBLIC_BASE_URL ?? new URL(c.req.url).origin).replace(/\/+$/, "");
+    if (!/^https?:\/\//.test(base)) base = `https://${base}`;
     return c.json({ repository, webhook_url: `${base}/webhooks/github`, webhook_secret: secret }, 201);
   });
 

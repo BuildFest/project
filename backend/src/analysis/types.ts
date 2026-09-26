@@ -104,10 +104,27 @@ export interface TaskOverride {
 export interface BranchState {
   repository_id: string;
   branch: string;
-  status: "active" | "merged" | "deleted" | "stale";
+  status: "active" | "merged" | "deleted";
   task_id: string | null;
+  changed_files: string[];
   open_pr_number: number | null;
   last_activity_at: Date | null;
+}
+
+export interface StoredHealthSignal extends DesiredHealthSignal {
+  signal_id: string;
+  status: "active" | "dismissed";
+}
+
+export interface StoredCollision {
+  collision_id: string;
+  repository_id: string;
+  branch_a: string;
+  branch_b: string;
+  task_a_id: string | null;
+  task_b_id: string | null;
+  overlapping_files: string[];
+  status: "active" | "dismissed";
 }
 
 export interface DerivedTaskState {

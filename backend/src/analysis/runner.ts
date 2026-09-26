@@ -5,6 +5,7 @@ import { loadProjectSnapshot } from "./load.js";
 import { persistAnalysis, type PersistResult } from "./persist.js";
 import { analyzeProject } from "./pipeline.js";
 import { maybeGenerateReplan, type ReplanGenerationResult } from "./replans.js";
+import { withAiProject } from "../ai/audit.js";
 
 export interface AnalysisRunOptions { skipLinking?: boolean; skipAi?: boolean }
 export interface AnalysisRunResult extends PersistResult {
@@ -20,9 +21,9 @@ export async function runAnalysis(db: Db, router: ModelRouter | null, projectId:
   const lock = await db.connect();
   try {
     await lock.query("select pg_advisory_lock(hashtext('analysis:' || $1))", [projectId]);
-    if (!options.skipLinking) await linkProjectEvents(db, router, projectId);
+    if (!options.skipLinking) await withAiProject(projectId, () => linkProjectEvents(db, router, projectId));
     const snapshot = await loadProjectSnapshot(db, projectId);
-    const result = await analyzeProject(snapshot, options.skipAi ? null : router, now);
+    const result = await withAiProject(projectId, () => analyzeProject(snapshot, options.skipAi ? null : router, now));
     const persisted = await withTransaction(db, (tx) => persistAnalysis(tx, projectId, snapshot, result));
     let replan: ReplanGenerationResult | null = null;
     let replanError: string | null = null;

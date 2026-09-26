@@ -282,3 +282,18 @@ export interface ProjectWorkspace {
   tasks: Task[];
   dependencies: TaskDependency[];
 }
+
+// ============================================================================
+// API envelopes (docs/api-contract.md §1, §4.5)
+// ============================================================================
+
+export interface Page<T> {
+  items: T[];
+  next_cursor: string | null; // opaque; pass back as ?cursor=
+}
+
+export interface ApiErrorBody {
+  error: string; // human-readable, safe to show in the UI
+  code?: string; // e.g. "23505" or "cycle"
+  issues?: unknown[];
+}

@@ -2,7 +2,7 @@
 --
 -- frontend/lib/types.ts mirrors this file. Column names are snake_case and
 -- match the TS interfaces 1:1; columns that don't appear in types.ts are
--- backend-only (secrets refs, S3 keys, fingerprints, audit timestamps).
+-- backend-only (secrets refs, fingerprints, audit timestamps).
 --
 -- Tables are grouped by the three layers from the tech doc (§2, §5), and the
 -- layers never write into each other:
@@ -230,7 +230,7 @@ create table repositories (
   connected_at           timestamptz,
   last_backfill_at       timestamptz,
   last_event_at          timestamptz,
-  webhook_secret_ref     text,  -- AWS Secrets Manager name/ARN. Never the secret itself.
+  webhook_secret_ref     text,  -- reference to wherever the secret is stored. Never the secret itself.
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now(),
   unique (project_id, repository_id),
@@ -256,7 +256,7 @@ create table webhook_deliveries (
   repository_id      text references repositories on delete cascade,
   github_event       text not null,     -- X-GitHub-Event header, e.g. "pull_request"
   action             text,              -- payload.action, e.g. "opened"
-  payload_s3_key     text,
+  payload            jsonb,             -- raw delivery body, stored inline (hackathon scale, see §2.12)
   status             text not null default 'received'
                        check (status in ('received', 'normalized', 'ignored', 'failed')),
   error              text,
@@ -294,7 +294,6 @@ create table github_events (
   commit             jsonb,  -- { sha, message, author, url }
   pull_request       jsonb,  -- { number, title, state, head_branch, base_branch, url, merged }
   changed_files      text[] not null default '{}',
-  payload_s3_key     text,
   schema_version     integer not null default 1,
   unique (project_id, event_id),
   unique (repository_id, event_type, external_event_id),

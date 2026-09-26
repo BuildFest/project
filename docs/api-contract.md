@@ -220,8 +220,8 @@ the initial plan is set up.
 ## 4. Repository and events — owner A
 
 ### 4.1 📝 `POST /projects/:projectId/repositories`
-Connects a GitHub repo. The server stores the webhook secret in Secrets Manager
-and returns the webhook URL to configure on GitHub.
+Connects a GitHub repo. The server stores the webhook secret (env var / secret
+store, not committed) and returns the webhook URL to configure on GitHub.
 
 ```ts
 { full_name: string /* "BuildFest/project" */; make_primary?: boolean /* default true */ }

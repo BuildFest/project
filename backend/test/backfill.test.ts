@@ -194,6 +194,43 @@ describe("runBackfill", () => {
   });
 });
 
+describe("backfill status on the repository", () => {
+  async function repoRow(repositoryId: string) {
+    const { rows } = await db.pool.query(
+      "select backfill_status, backfill_error, last_backfill_at from repositories where repository_id = $1",
+      [repositoryId],
+    );
+    return rows[0];
+  }
+
+  it("records success", async () => {
+    const { repositoryId } = await connectedRepo();
+    await runBackfill(db.pool, repositoryId);
+    expect(await repoRow(repositoryId)).toMatchObject({ backfill_status: "succeeded", backfill_error: null });
+  });
+
+  it("keeps importing branches when pull requests can't be listed, and says why", async () => {
+    const { repositoryId, fullName } = await connectedRepo();
+    routes.set(`https://api.github.com/repos/${fullName}/pulls?state=all&sort=created&direction=asc&per_page=100`, () =>
+      new Response("{}", { status: 403 }),
+    );
+    const stats = await runBackfill(db.pool, repositoryId);
+    expect(stats.branches_listed).toBe(2);
+    expect(await branches(repositoryId)).toHaveProperty("feat-b.changed_files", ["src/x.ts", "src/y.ts"]);
+    const row = await repoRow(repositoryId);
+    expect(row.backfill_status).toBe("partial");
+    expect(row.backfill_error).toMatch(/pull requests: GitHub returned 403.*Pull requests: Read/);
+    expect(row.last_backfill_at).not.toBeNull();
+  });
+
+  it("marks the run failed when the repository itself can't be read", async () => {
+    const { repositoryId, fullName } = await connectedRepo();
+    routes.delete(`https://api.github.com/repos/${fullName}`);
+    await expect(runBackfill(db.pool, repositoryId)).rejects.toThrow(/404/);
+    expect(await repoRow(repositoryId)).toMatchObject({ backfill_status: "failed", last_backfill_at: null });
+  });
+});
+
 describe("POST /projects/:projectId/repositories/:repositoryId/backfill", () => {
   it("starts a run in the background and 404s for another project's repo", async () => {
     const { projectId, repositoryId } = await connectedRepo();

@@ -1,44 +1,46 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   Pit Crew theme — "Garage"
-   Cool, soft dark greys in the spirit of GitHub and Discord (never pure
-   black, never pure white), boxy panels with header strips, one muted
-   orange brand color, and GitHub-style status colors developers already
-   know. Change values here; components use the token names.
+   Pit Crew theme
+   Built on GitHub's dark palette (Primer) so it reads like a real developer
+   tool: near-black header, canvas-colored boxes with a slightly lighter header
+   row, system font, restrained color. Orange is our one brand accent.
+   Change values here; components use the token names.
    ========================================================================== */
 
 :root {
-  /* Surfaces — layered cool greys */
-  --pc-bg: #111418;         /* page */
-  --pc-surface: #171b21;    /* boxes */
-  --pc-raised: #1f242c;     /* box headers, inputs, hover */
-  --pc-line: #2d333c;       /* borders */
-  --pc-line-strong: #434b56;
+  --pc-topbar: #010409;       /* app header, darker than the page */
+  --pc-bg: #0d1117;           /* page canvas */
+  --pc-surface: #0d1117;      /* boxes: same as canvas, defined by borders */
+  --pc-raised: #151b23;       /* box header rows, hover */
+  --pc-line: #30363d;         /* row dividers */
+  --pc-line-strong: #3d444d;  /* box + control borders */
+  --pc-btn: #212830;          /* default button */
+  --pc-btn-hover: #262c36;
 
-  /* Text — soft, not pure white */
-  --pc-header: #f0f2f4;
-  --pc-text: #dde1e6;
-  --pc-muted: #939ca7;
-  --pc-faint: #6b737e;
+  --pc-header: #f0f6fc;
+  --pc-text: #d1d7e0;
+  --pc-muted: #9198a1;
+  --pc-faint: #656c76;
 
-  /* Brand — muted pit-lane orange (buttons, logo mark) */
-  --pc-signal: #c4551f;
+  --pc-signal: #c4551f;       /* brand orange: primary buttons, selected tab */
   --pc-signal-hover: #d0602a;
   --pc-signal-ink: #ffffff;
+  --pc-tab: #f78166;          /* selected-tab underline */
 
-  /* Links & focus — familiar developer blue */
-  --pc-link: #58a6ff;
-
-  /* Status — GitHub-style semantics */
-  --pc-green: #3fb950;  /* complete, on track */
-  --pc-blue: #4493f8;   /* in progress */
-  --pc-yellow: #d29922; /* at risk, slipping */
-  --pc-red: #f85149;    /* blocked, critical */
-  --pc-purple: #a371f7; /* ahead of plan — use sparingly */
+  --pc-link: #4493f8;
+  --pc-green: #3fb950;
+  --pc-blue: #4493f8;
+  --pc-yellow: #d29922;
+  --pc-red: #f85149;
+  --pc-purple: #ab7df8;
 }
 
 @theme inline {
+  --color-topbar: var(--pc-topbar);
+  --color-btn: var(--pc-btn);
+  --color-btn-hover: var(--pc-btn-hover);
+  --color-tab: var(--pc-tab);
   --color-bg: var(--pc-bg);
   --color-surface: var(--pc-surface);
   --color-raised: var(--pc-raised);
@@ -58,9 +60,9 @@
   --color-red: var(--pc-red);
   --color-purple: var(--pc-purple);
 
-  --font-sans: var(--font-body);
-  --font-display: var(--font-display-face);
-  --font-mono: var(--font-code);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 html {
@@ -70,7 +72,9 @@ html {
 body {
   background: var(--pc-bg);
   color: var(--pc-text);
-  font-family: var(--font-body), system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 ::selection {

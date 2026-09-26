@@ -297,3 +297,24 @@ export interface ApiErrorBody {
   code?: string; // e.g. "23505" or "cycle"
   issues?: unknown[];
 }
+
+// ============================================================================
+// Project intelligence (docs/api-contract.md §5)
+// ============================================================================
+
+export interface ProjectState {
+  computed_at: string; // latest analyzer run
+  tasks: DerivedTaskState[]; // one per analyzed, non-archived task
+  signals: HealthSignal[]; // active only
+  collisions: Collision[]; // active only
+  pending_links: EventTaskLink[]; // suggested, awaiting review
+  open_replans: number;
+}
+
+export interface TaskEvidence {
+  task: Task;
+  state: DerivedTaskState | null;
+  blocking_tasks: Array<{ task: Task; state: DerivedTaskState | null }>;
+  links: Array<EventTaskLink & { event: GithubEvent }>; // not rejected, newest first
+  signals: HealthSignal[]; // active, mentioning this task
+}

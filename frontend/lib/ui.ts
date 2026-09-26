@@ -1,22 +1,30 @@
+import type { DerivedStatus, PlanStatus } from "./types";
+
 // Small shared UI helpers.
 
 export const inputCls =
-  "rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-text placeholder:text-faint hover:border-line-strong focus:border-link focus:outline-none";
+  "rounded-md border border-line-strong bg-bg px-3 py-[5px] text-sm text-header placeholder:text-faint focus:border-link focus:outline-none focus:ring-1 focus:ring-link";
 
-// Primary action (one per area).
+// Primary action (one per area) — our orange, GitHub button proportions.
 export const buttonCls =
-  "rounded-md border border-black/20 bg-signal px-3 py-1.5 text-sm font-semibold text-signal-ink hover:bg-signal-hover disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-md border border-white/10 bg-signal px-3 py-[5px] text-sm font-medium text-signal-ink hover:bg-signal-hover disabled:cursor-not-allowed disabled:opacity-50";
 
-// Secondary action — GitHub-style default button.
+// Default button — GitHub's grey button.
 export const ghostButtonCls =
-  "rounded-md border border-line bg-raised px-3 py-1.5 text-sm font-medium text-text hover:border-line-strong hover:bg-line disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-md border border-line-strong bg-btn px-3 py-[5px] text-sm font-medium text-header hover:bg-btn-hover disabled:cursor-not-allowed disabled:opacity-50";
 
-export const labelCls = "mb-1 block text-sm font-medium text-text";
+export const smallButtonCls =
+  "inline-flex items-center justify-center rounded-md border border-line-strong bg-btn px-2 py-[2px] text-xs font-medium text-header hover:bg-btn-hover disabled:opacity-50";
 
-// "Box" pattern: bordered panel with a header strip.
-export const boxCls = "overflow-hidden rounded-md border border-line bg-surface";
+export const labelCls = "mb-1.5 block text-sm font-semibold text-header";
+
+// GitHub "Label": small outlined pill.
+export const pillCls = "inline-flex items-center rounded-full border border-line-strong px-2 text-xs font-medium text-muted";
+
+// "Box": bordered panel with a header row.
+export const boxCls = "overflow-hidden rounded-md border border-line-strong bg-surface";
 export const boxHeaderCls =
-  "flex items-center justify-between gap-3 border-b border-line bg-raised px-4 py-2.5";
+  "flex items-center justify-between gap-3 border-b border-line-strong bg-raised px-4 py-3";
 export const boxTitleCls = "text-sm font-semibold text-header";
 export const boxBodyCls = "p-4";
 
@@ -60,3 +68,25 @@ export const statusStyles: Record<string, string> = {
   complete: "border-green/50 bg-green/10 text-green",
   cancelled: "border-line text-faint line-through",
 };
+
+// Map the team's plan status onto the derived vocabulary so the two can be
+// compared ("blocked" ~ "possibly_blocked"; cancelled tasks aren't compared).
+export function planAsDerived(s: PlanStatus): DerivedStatus | null {
+  if (s === "cancelled") return null;
+  if (s === "blocked") return "possibly_blocked";
+  return s;
+}
+
+// Reverse: what plan_status to write when the team accepts what Pit Crew saw.
+export function derivedAsPlan(s: DerivedStatus): PlanStatus {
+  return s === "possibly_blocked" ? "blocked" : s;
+}
+
+export function timeAgo(iso: string | null): string {
+  if (!iso) return "—";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}

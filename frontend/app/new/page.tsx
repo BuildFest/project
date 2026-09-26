@@ -54,6 +54,7 @@ export default function NewProjectPage() {
   const [brief, setBrief] = useState("");
   const [members, setMembers] = useState<MemberDraft[]>([{ display_name: "", github_login: "" }]);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const effectivePrefix = prefixTouched ? prefix : suggestPrefix(name);
 
@@ -64,7 +65,10 @@ export default function NewProjectPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    const ws = await createProject({
+    setError(null);
+    let ws;
+    try {
+      ws = await createProject({
       name: name.trim(),
       task_key_prefix: effectivePrefix.toUpperCase(),
       deadline_at: deadline ? new Date(deadline).toISOString() : null,
@@ -75,7 +79,12 @@ export default function NewProjectPage() {
           github_login: m.github_login.trim().replace(/^@/, "") || null,
         })),
       brief,
-    });
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't create the project.");
+      setSaving(false);
+      return;
+    }
     router.push(`/projects/${ws.project.project_id}`);
   }
 
@@ -163,6 +172,9 @@ export default function NewProjectPage() {
 
         <hr className="my-6 border-line" />
 
+        {error && (
+          <p className="mb-4 rounded-md border border-red/40 bg-red/10 px-3 py-2 text-sm text-red">{error}</p>
+        )}
         <div className="flex items-center gap-3">
           <button className={buttonCls} disabled={saving || !name.trim()}>
             {saving ? "Creating…" : "Create project"}

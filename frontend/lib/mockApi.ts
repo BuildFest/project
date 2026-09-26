@@ -302,7 +302,7 @@ function generateEvents(w: ProjectWorkspace): GithubEvent[] {
 
     const files = [
       [`backend/src/${slug(p.title)}.ts`, `backend/test/${slug(p.title)}.test.ts`],
-      [`frontend/components/${slug(p.title)}.tsx`, i < 2 ? shared : "frontend/app/page.tsx"],
+      [`frontend/components/${slug(p.title)}.tsx`, i === 1 || i === 2 ? shared : "frontend/app/page.tsx"],
     ];
     files.forEach((changed, j) => {
       tick(35 + j * 12);
@@ -356,13 +356,15 @@ function generateEvents(w: ProjectWorkspace): GithubEvent[] {
   return events.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
 }
 
-export async function listEvents(
-  projectId: string,
-  opts: { branch?: string; limit?: number; cursor?: string | null } = {}
-): Promise<Page<GithubEvent>> {
-  const w = load().find((x) => x.project.project_id === projectId);
-  if (!w) throw new Error("Project not found");
-
+export function mockEventsFor(w: ProjectWorkspace): GithubEvent[] {
+  // Keyed by the first few task keys/titles, so sample events regenerate when
+  // the plan changes and branch names keep matching real tasks.
+  const sig = w.tasks
+    .filter((t) => !t.archived)
+    .slice(0, 4)
+    .map((t) => `${t.task_key}:${t.title}`)
+    .join("|");
+  const projectId = `${w.project.project_id}#${sig}`;
   let all: Record<string, GithubEvent[]> = {};
   try {
     all = JSON.parse(localStorage.getItem(EVENTS_KEY) ?? "{}");
@@ -377,10 +379,20 @@ export async function listEvents(
       /* ignore */
     }
   }
+  return all[projectId];
+}
+
+export async function listEvents(
+  projectId: string,
+  opts: { branch?: string; limit?: number; cursor?: string | null } = {}
+): Promise<Page<GithubEvent>> {
+  const w = load().find((x) => x.project.project_id === projectId);
+  if (!w) throw new Error("Project not found");
+  const events = mockEventsFor(w);
 
   const limit = Math.min(opts.limit ?? 50, 200);
   const start = opts.cursor ? Number(opts.cursor) : 0;
-  const items = all[projectId].filter((e) => !opts.branch || e.branch === opts.branch);
+  const items = events.filter((e) => !opts.branch || e.branch === opts.branch);
   const page = items.slice(start, start + limit);
   return {
     items: page,
@@ -390,10 +402,16 @@ export async function listEvents(
 
 export function resetMockEvents(projectId: string) {
   try {
-    const all = JSON.parse(localStorage.getItem(EVENTS_KEY) ?? "{}");
-    delete all[projectId];
+    const all: Record<string, unknown> = JSON.parse(localStorage.getItem(EVENTS_KEY) ?? "{}");
+    for (const k of Object.keys(all)) if (k.startsWith(`${projectId}#`)) delete all[k];
     localStorage.setItem(EVENTS_KEY, JSON.stringify(all));
   } catch {
     /* ignore */
   }
+}
+
+export function mockWorkspace(projectId: string): ProjectWorkspace {
+  const w = load().find((x) => x.project.project_id === projectId);
+  if (!w) throw new Error("Project not found");
+  return w;
 }

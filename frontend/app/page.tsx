@@ -9,9 +9,13 @@ import { boxCls, boxHeaderCls, boxTitleCls, buttonCls, formatDate } from "@/lib/
 export default function Home() {
   // undefined = still loading from storage
   const [workspaces, setWorkspaces] = useState<ProjectWorkspace[] | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    listProjects().then(setWorkspaces);
+    listProjects().then(
+      (ws) => setWorkspaces(ws),
+      (e) => setError(e instanceof Error ? e.message : "Couldn't load projects.")
+    );
   }, []);
 
   return (
@@ -32,7 +36,16 @@ export default function Home() {
           <span className="text-xs text-muted">{workspaces?.length ?? ""}</span>
         </div>
 
-        {workspaces === undefined ? (
+        {error ? (
+          <div className="px-4 py-10 text-center">
+            <p className="font-semibold text-red">Can&apos;t load projects</p>
+            <p className="mt-1 text-sm text-muted">{error}</p>
+            <p className="mt-3 text-xs text-faint">
+              To use sample data instead, delete <span className="font-mono">frontend/.env.local</span> and restart{" "}
+              <span className="font-mono">npm run dev</span>.
+            </p>
+          </div>
+        ) : workspaces === undefined ? (
           <p className="px-4 py-8 text-center text-sm text-muted">Loading…</p>
         ) : workspaces.length === 0 ? (
           <div className="px-4 py-12 text-center">

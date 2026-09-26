@@ -5,13 +5,17 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import ActivityTimeline from "@/components/ActivityTimeline";
 import BriefEditor from "@/components/BriefEditor";
+import ActingAs from "@/components/ActingAs";
 import MilestoneEditor from "@/components/MilestoneEditor";
+import Overview from "@/components/Overview";
 import PlanTable from "@/components/PlanTable";
 import { getProject } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
-import { formatDate } from "@/lib/ui";
+import { IconChecklist, IconCommit, IconProject, IconPulse } from "@/components/Icons";
+import { pillCls } from "@/lib/ui";
 
-type Tab = "plan" | "activity";
+type Tab = "overview" | "plan" | "activity";
+const TABS: Tab[] = ["overview", "plan", "activity"];
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -19,9 +23,10 @@ export default function ProjectPage() {
   const [workspace, setWorkspace] = useState<ProjectWorkspace | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Tab lives in the URL hash (#activity) so refresh/links keep it.
-  const [tab, setTab] = useState<Tab>(() =>
-    typeof window !== "undefined" && window.location.hash === "#activity" ? "activity" : "plan"
-  );
+  const [tab, setTab] = useState<Tab>(() => {
+    const h = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+    return (TABS as string[]).includes(h) ? (h as Tab) : "overview";
+  });
 
   useEffect(() => {
     getProject(id)
@@ -55,64 +60,63 @@ export default function ProjectPage() {
     );
   }
 
-  const { project, members, tasks } = workspace;
+  const { project, tasks } = workspace;
   const active = tasks.filter((t) => !t.archived);
-  const done = active.filter((t) => t.plan_status === "complete").length;
+
+  const TABS_UI: { key: Tab; label: string; icon: React.ReactNode; count?: number }[] = [
+    { key: "overview", label: "Overview", icon: <IconPulse /> },
+    { key: "plan", label: "Plan", icon: <IconChecklist />, count: active.length },
+    { key: "activity", label: "Activity", icon: <IconCommit /> },
+  ];
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-6 px-6 py-8">
-      <header>
-        <nav className="mb-2 text-sm text-muted">
-          <Link href="/" className="text-link hover:underline">Projects</Link>
-          <span className="mx-1.5">/</span>
-          <span className="font-semibold text-header">{project.name}</span>
-        </nav>
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold text-header">{project.name}</h1>
-          <span className="rounded-full border border-line px-2 font-mono text-xs text-muted">
-            {project.task_key_prefix}
-          </span>
-        </div>
-        <p className="mt-1 text-sm text-muted">
-          {members
-            .map((m) => (m.github_login ? `${m.display_name} (@${m.github_login})` : m.display_name))
-            .join(", ") || "No team yet"}
-          {" · "}due {formatDate(project.deadline_at)}
-          {" · "}{done}/{active.length} tasks complete
-        </p>
-      </header>
-
-      {/* GitHub-style underline tabs */}
-      <nav className="flex gap-1 border-b border-line">
-        {([
-          ["plan", "Plan", active.length],
-          ["activity", "Activity", null],
-        ] as const).map(([key, label, count]) => (
-          <button key={key} onClick={() => selectTab(key)}
-            className={`-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm ${
-              tab === key
-                ? "border-signal font-semibold text-header"
-                : "border-transparent text-muted hover:border-line-strong hover:text-text"
-            }`}>
-            {label}
-            {count !== null && (
-              <span className="rounded-full bg-line px-1.5 text-xs text-muted">{count}</span>
-            )}
-          </button>
-        ))}
-      </nav>
-
-      {tab === "plan" ? (
-        <>
-          <div className="grid gap-6 lg:grid-cols-2">
-            <BriefEditor workspace={workspace} onChange={setWorkspace} />
-            <MilestoneEditor workspace={workspace} onChange={setWorkspace} />
+    <>
+      {/* Project header — continues the dark top bar, like a GitHub repo header */}
+      <div className="border-b border-line-strong bg-topbar">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
+            <div className="flex min-w-0 items-center gap-2 text-base">
+              <IconProject className="shrink-0 text-muted" />
+              <Link href="/" className="text-header hover:text-link hover:underline">Projects</Link>
+              <span className="text-muted">/</span>
+              <span className="truncate font-semibold text-header">{project.name}</span>
+              <span className={pillCls}>{project.task_key_prefix}</span>
+            </div>
+            <ActingAs workspace={workspace} />
           </div>
-          <PlanTable workspace={workspace} onChange={setWorkspace} />
-        </>
-      ) : (
-        <ActivityTimeline workspace={workspace} />
-      )}
-    </main>
+
+          <nav className="-mb-px flex gap-2 overflow-x-auto">
+            {TABS_UI.map((t) => (
+              <button key={t.key} onClick={() => selectTab(t.key)}
+                className={`flex items-center gap-2 whitespace-nowrap border-b-2 px-2 pb-2 pt-1 text-sm ${
+                  tab === t.key ? "border-tab font-semibold text-header" : "border-transparent text-text"
+                }`}>
+                <span className="text-muted">{t.icon}</span>
+                <span className="rounded-md px-1 py-0.5 hover:bg-btn">{t.label}</span>
+                {t.count !== undefined && (
+                  <span className="rounded-full bg-btn px-1.5 text-xs font-medium text-text">{t.count}</span>
+                )}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      <main className="mx-auto w-full max-w-7xl space-y-6 px-6 py-6">
+        {tab === "overview" ? (
+          <Overview workspace={workspace} onWorkspaceChange={setWorkspace} />
+        ) : tab === "plan" ? (
+          <>
+            <div className="grid gap-6 lg:grid-cols-2">
+              <BriefEditor workspace={workspace} onChange={setWorkspace} />
+              <MilestoneEditor workspace={workspace} onChange={setWorkspace} />
+            </div>
+            <PlanTable workspace={workspace} onChange={setWorkspace} />
+          </>
+        ) : (
+          <ActivityTimeline workspace={workspace} />
+        )}
+      </main>
+    </>
   );
 }

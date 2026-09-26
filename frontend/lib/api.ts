@@ -4,9 +4,14 @@
 // the real API described in docs/api-contract.md. Otherwise it falls back to the
 // in-browser mock in lib/mockApi.ts so the UI still works without a backend.
 
+import * as analyzer from "./mockAnalyzer";
 import * as mock from "./mockApi";
 import type {
   ApiErrorBody,
+  DerivedStatus,
+  DerivedTaskState,
+  ProjectState,
+  TaskEvidence,
   GithubEvent,
   Milestone,
   Page,
@@ -154,4 +159,49 @@ export async function listEvents(
   if (opts.cursor) q.set("cursor", opts.cursor);
   const qs = q.toString();
   return http<Page<GithubEvent>>("GET", `/projects/${enc(projectId)}/events${qs ? `?${qs}` : ""}`);
+}
+
+// ---- project intelligence (contract §5) --------------------------------------
+
+
+export async function getState(projectId: string): Promise<ProjectState> {
+  if (usingMockApi) return analyzer.getState(projectId);
+  return http<ProjectState>("GET", `/projects/${enc(projectId)}/state`);
+}
+
+export async function getTaskEvidence(projectId: string, taskId: string): Promise<TaskEvidence> {
+  if (usingMockApi) return analyzer.getTaskEvidence(projectId, taskId);
+  return http<TaskEvidence>("GET", `/projects/${enc(projectId)}/tasks/${enc(taskId)}/evidence`);
+}
+
+// A human corrects Pit Crew's derived status (§5.3). `version` is the
+// DerivedTaskState.version the user saw; a 409 means the analyzer re-ran.
+export async function overrideTaskStatus(
+  projectId: string,
+  taskId: string,
+  input: { override_status: DerivedStatus; reason?: string; member_id: string; version: number }
+): Promise<void> {
+  if (usingMockApi) return analyzer.setOverride(projectId, taskId, input);
+  await http<DerivedTaskState>("PUT", `/projects/${enc(projectId)}/tasks/${enc(taskId)}/override`, input);
+}
+
+export async function clearTaskOverride(projectId: string, taskId: string): Promise<void> {
+  if (usingMockApi) return analyzer.clearOverride(projectId, taskId);
+  await http<DerivedTaskState>("DELETE", `/projects/${enc(projectId)}/tasks/${enc(taskId)}/override`);
+}
+
+export async function dismissSignal(projectId: string, signalId: string, memberId: string) {
+  if (usingMockApi) return analyzer.dismiss(projectId, signalId);
+  await http("PATCH", `/projects/${enc(projectId)}/signals/${enc(signalId)}`, {
+    status: "dismissed",
+    member_id: memberId,
+  });
+}
+
+export async function dismissCollision(projectId: string, collisionId: string, memberId: string) {
+  if (usingMockApi) return analyzer.dismiss(projectId, collisionId);
+  await http("PATCH", `/projects/${enc(projectId)}/collisions/${enc(collisionId)}`, {
+    status: "dismissed",
+    member_id: memberId,
+  });
 }

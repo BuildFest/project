@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, listEvents, usingMockApi } from "@/lib/api";
 import { GithubEvent, ProjectWorkspace, Task } from "@/lib/types";
-import { boxCls, boxHeaderCls, boxTitleCls, ghostButtonCls, inputCls } from "@/lib/ui";
+import { boxCls, boxHeaderCls, boxTitleCls, ghostButtonCls, inputCls, pillCls, smallButtonCls } from "@/lib/ui";
 
 // GitHub-style activity feed built from normalized github_events
 // (docs/api-contract.md §4.5). Newest first, grouped by day.
@@ -160,12 +160,12 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
         <h2 className={boxTitleCls}>Activity</h2>
         <div className="flex items-center gap-2">
           {usingMockApi && (
-            <span className="rounded-full border border-yellow/40 bg-yellow/10 px-2 py-0.5 text-xs text-yellow"
+            <span className={pillCls}
               title="Set NEXT_PUBLIC_API_URL in frontend/.env.local to use real events">
               Sample data
             </span>
           )}
-          <button className={`${ghostButtonCls} !px-2 !py-0.5 text-xs`} onClick={loadFirst}>
+          <button className={smallButtonCls} onClick={loadFirst}>
             Refresh
           </button>
         </div>

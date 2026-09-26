@@ -3,16 +3,7 @@
 import { useState } from "react";
 import { updateBrief } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
-import {
-  boxBodyCls,
-  boxCls,
-  boxHeaderCls,
-  boxTitleCls,
-  buttonCls,
-  formatDate,
-  ghostButtonCls,
-  inputCls,
-} from "@/lib/ui";
+import { boxBodyCls, boxCls, boxHeaderCls, boxTitleCls, buttonCls, formatDate, ghostButtonCls, inputCls, smallButtonCls } from "@/lib/ui";
 
 // Markdown brief for now. Swap the textarea for a rich-text editor (Tiptap)
 // later without changing the API: brief.content stays the source of truth.
@@ -39,7 +30,7 @@ export default function BriefEditor({
         <div className="flex items-center gap-3">
           <span className="text-xs text-muted">Updated {formatDate(brief.updated_at)}</span>
           {!editing && (
-            <button className={`${ghostButtonCls} !px-2 !py-0.5 text-xs`} onClick={() => setEditing(true)}>
+            <button className={smallButtonCls} onClick={() => setEditing(true)}>
               Edit
             </button>
           )}

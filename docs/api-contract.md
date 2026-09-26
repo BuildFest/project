@@ -374,7 +374,7 @@ already count toward the task's derived status (shown as AI-inferred), but they
 stay in the review queue until someone confirms or rejects them. Each link has
 a `reason: string | null` explaining why it was made.
 
-### 5.2 📝 `GET /projects/:projectId/tasks/:taskId/evidence`
+### 5.2 ✅ `GET /projects/:projectId/tasks/:taskId/evidence`
 Answers "why does Pit Crew believe this?" (tech doc §17).
 
 ```ts
@@ -387,6 +387,9 @@ interface TaskEvidence {
 }
 ```
 → `200 TaskEvidence` · `404`
+
+`blocking_tasks` follows `state.blocking_task_ids` order and omits IDs that no
+longer resolve to a task in the project. `links` and `signals` are newest first.
 
 ### 5.3 📝 `PUT /projects/:projectId/tasks/:taskId/override`
 A human corrects the derived status. `effective_status` changes at once, while

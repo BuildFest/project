@@ -34,21 +34,32 @@ export async function refreshChangedFiles(db: Queryable, ref: BranchRef, fetchIm
   if (res.status === 404) return "skipped"; // branch or commit gone since the push
   if (!res.ok) throw new Error(`GitHub compare returned ${res.status} for ${row.full_name} ${ref.branch}`);
 
-  // GitHub lists at most 300 files here; a larger diff is silently truncated.
-  const body = (await res.json()) as { files?: Array<{ filename: string; previous_filename?: string }> };
+  const body = (await res.json()) as CompareResponse;
+  return (await storeChangedFiles(db, ref, row.head_sha, changedFilesOf(body))) ? "updated" : "stale";
+}
+
+export interface CompareResponse {
+  files?: Array<{ filename: string; previous_filename?: string }>;
+}
+
+/** GitHub lists at most 300 files per compare; a larger diff is silently truncated. */
+export function changedFilesOf(body: CompareResponse): string[] {
   const files = new Set<string>();
   for (const f of body.files ?? []) {
     files.add(f.filename);
     if (f.previous_filename) files.add(f.previous_filename); // a rename touches both paths
   }
+  return [...files].sort();
+}
 
-  // Only if the head is still the one we compared; a newer push has its own refresh queued.
+/** Writes only if the head is still the one compared; a newer push has its own refresh queued. */
+export async function storeChangedFiles(db: Queryable, ref: BranchRef, headSha: string, files: string[]): Promise<boolean> {
   const { rowCount } = await db.query(
     `update branch_states set changed_files = $3
       where repository_id = $1 and branch = $2 and head_sha = $4`,
-    [ref.repositoryId, ref.branch, [...files].sort(), row.head_sha],
+    [ref.repositoryId, ref.branch, files, headSha],
   );
-  return rowCount ? "updated" : "stale";
+  return (rowCount ?? 0) > 0;
 }
 
 /**

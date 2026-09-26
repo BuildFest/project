@@ -266,3 +266,75 @@ describe("POST /webhooks/github", () => {
     expect(await eventCount(repositoryId)).toBe(2);
   });
 });
+
+describe("GET /projects/:projectId/events", () => {
+  async function seeded() {
+    const repo = await connectedRepo();
+    await sendWebhook("push", pushPayload(repo.githubId, {
+      created: true, after: sha(3),
+      commits: [commit(1, ["a.ts"], "2026-09-26T10:00:00Z"), commit(2, ["b.ts"], "2026-09-26T10:05:00Z"), commit(3, ["c.ts"], "2026-09-26T10:10:00Z")],
+    }));
+    await sendWebhook("push", pushPayload(repo.githubId, { branch: "other", created: true, after: sha(9), commits: [commit(9, ["z.ts"])] }));
+    return repo;
+  }
+
+  it("browses newest first with a cursor that visits every event exactly once", async () => {
+    const { projectId } = await seeded();
+    const all = (await call("GET", `/projects/${projectId}/events?limit=200`)).body;
+    expect(all.next_cursor).toBeNull();
+    expect(all.items.length).toBe(8); // 5 on feature/auth, 3 on other
+    const times = all.items.map((e: any) => e.occurred_at);
+    expect([...times].sort().reverse()).toEqual(times);
+    expect(typeof all.items[0].seq).toBe("number");
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: any = (await call("GET", `/projects/${projectId}/events?limit=3${cursor ? `&cursor=${cursor}` : ""}`)).body;
+      seen.push(...page.items.map((e: any) => e.event_id));
+      cursor = page.next_cursor;
+    } while (cursor);
+    expect(seen).toEqual(all.items.map((e: any) => e.event_id));
+  });
+
+  it("consumes by seq for analyzers (after_seq)", async () => {
+    const { projectId } = await seeded();
+    const first = (await call("GET", `/projects/${projectId}/events?after_seq=0&limit=5`)).body;
+    expect(first.items).toHaveLength(5);
+    expect(first.has_more).toBe(true);
+    const seqs = first.items.map((e: any) => e.seq);
+    expect([...seqs].sort((a: number, b: number) => a - b)).toEqual(seqs);
+    expect(first.next_after_seq).toBe(seqs[4]);
+
+    const rest = (await call("GET", `/projects/${projectId}/events?after_seq=${first.next_after_seq}`)).body;
+    expect(rest).toMatchObject({ has_more: false });
+    expect(rest.items).toHaveLength(3);
+    const done = (await call("GET", `/projects/${projectId}/events?after_seq=${rest.next_after_seq}`)).body;
+    expect(done).toEqual({ items: [], next_after_seq: rest.next_after_seq, has_more: false });
+  });
+
+  it("filters by branch and by task links that aren't rejected", async () => {
+    const { projectId } = await seeded();
+    const other = (await call("GET", `/projects/${projectId}/events?branch=other`)).body.items;
+    expect(other.map((e: any) => e.branch)).toEqual(["other", "other", "other"]);
+
+    const task = (await call("POST", `/projects/${projectId}/tasks`, { title: "Auth" })).body;
+    const [linked, rejected] = (await call("GET", `/projects/${projectId}/events?branch=feature/auth`)).body.items;
+    for (const [i, e, status] of [[1, linked, "confirmed"], [2, rejected, "rejected"]] as const) {
+      await db.pool.query(
+        `insert into event_task_links (link_id, project_id, event_id, task_id, method, confidence, status)
+         values ($1, $2, $3, $4, 'task_key', 1, $5)`,
+        [`link_${projectId}_${i}`, projectId, e.event_id, task.task_id, status],
+      );
+    }
+    const byTask = (await call("GET", `/projects/${projectId}/events?task_id=${task.task_id}`)).body.items;
+    expect(byTask.map((e: any) => e.event_id)).toEqual([linked.event_id]);
+  });
+
+  it("rejects mixing modes and unknown projects", async () => {
+    const { projectId } = await seeded();
+    expect((await call("GET", `/projects/${projectId}/events?after_seq=0&cursor=5`)).status).toBe(400);
+    expect((await call("GET", `/projects/${projectId}/events?limit=zero`)).status).toBe(400);
+    expect((await call("GET", "/projects/proj_nope/events")).status).toBe(404);
+  });
+});

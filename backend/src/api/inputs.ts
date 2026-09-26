@@ -82,6 +82,18 @@ export const ConnectRepositoryInput = z.object({
   make_primary: z.boolean().default(true),
 });
 
+// Query strings arrive as text, hence z.coerce. Browse mode (cursor) and
+// consumer mode (after_seq) order differently, so they can't be combined.
+export const ListEventsQuery = z
+  .object({
+    branch: z.string().min(1).optional(),
+    task_id: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).optional(),
+    cursor: z.string().regex(/^\d+$/, "invalid cursor").optional(),
+    after_seq: z.coerce.number().int().min(0).optional(),
+  })
+  .refine((q) => q.cursor === undefined || q.after_seq === undefined, "use either cursor or after_seq, not both");
+
 export const CreateDependencyInput = z.object({
   task_id: z.string().min(1),
   depends_on_task_id: z.string().min(1),

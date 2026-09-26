@@ -1,10 +1,12 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { withTransaction, type Db, type Queryable } from "../db.js";
 import { newId } from "../ids.js";
 import { pgErrorToHttp } from "./errors.js";
+import { notFound, parseBody } from "./http.js";
+import { registerIngestionRoutes } from "./ingestion.js";
 import {
   CreateDependencyInput,
   CreateMilestoneInput,
@@ -16,20 +18,6 @@ import {
   UpdateTaskInput,
 } from "./inputs.js";
 import { loadWorkspaces } from "./workspace.js";
-
-async function parseBody<S extends z.ZodType>(c: Context, schema: S): Promise<z.output<S>> {
-  let json: unknown;
-  try {
-    json = await c.req.json();
-  } catch {
-    throw new HTTPException(400, { message: "request body must be JSON" });
-  }
-  return schema.parse(json);
-}
-
-function notFound(what: string): never {
-  throw new HTTPException(404, { message: `${what} not found` });
-}
 
 /**
  * UPDATE ... SET only the keys present in `patch`. Column names come from a
@@ -201,6 +189,10 @@ export function createApp(db: Db) {
     );
     return rowCount ? c.body(null, 204) : notFound("dependency");
   });
+
+  // ---- repositories and webhooks (src/api/ingestion.ts) ---------------------
+
+  registerIngestionRoutes(app, db);
 
   return app;
 }

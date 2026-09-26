@@ -1,9 +1,9 @@
 import type { ModelRouter } from "../ai/router.js";
 import { withTransaction, type Db } from "../db.js";
 import { linkProjectEvents } from "./linkEvents.js";
-import { loadProjectSnapshot } from "./load.js";
+import { loadProjectSnapshot, type ProjectSnapshot } from "./load.js";
 import { persistAnalysis, type PersistResult } from "./persist.js";
-import { analyzeProject } from "./pipeline.js";
+import { analyzeProject, type AnalysisResult } from "./pipeline.js";
 import { maybeGenerateReplan, type ReplanGenerationResult } from "./replans.js";
 import { withAiProject } from "../ai/audit.js";
 import { notifyPendingPullRequests } from "./preMerge.js";
@@ -21,27 +21,30 @@ export async function runAnalysis(db: Db, router: ModelRouter | null, projectId:
   // A session-level lock serializes the complete read/interpret/write cycle,
   // including direct CLI calls and runs from different server processes.
   const lock = await db.connect();
+  let snapshot: ProjectSnapshot;
+  let result: AnalysisResult;
+  let persisted: PersistResult;
+  let replan: ReplanGenerationResult | null = null;
+  let replanError: string | null = null;
   try {
     await lock.query("select pg_advisory_lock(hashtext('analysis:' || $1))", [projectId]);
     if (!options.skipLinking) await withAiProject(projectId, () => linkProjectEvents(db, router, projectId));
-    const snapshot = await loadProjectSnapshot(db, projectId);
-    const result = await withAiProject(projectId, () => analyzeProject(snapshot, options.skipAi ? null : router, now));
-    const persisted = await withTransaction(db, (tx) => persistAnalysis(tx, projectId, snapshot, result));
-    let replan: ReplanGenerationResult | null = null;
-    let replanError: string | null = null;
+    snapshot = await loadProjectSnapshot(db, projectId);
+    result = await withAiProject(projectId, () => analyzeProject(snapshot, options.skipAi ? null : router, now));
+    persisted = await withTransaction(db, (tx) => persistAnalysis(tx, projectId, snapshot, result));
     try {
       replan = await maybeGenerateReplan(db, options.skipAi ? null : router, projectId);
     } catch (error) {
       replanError = (error as Error).message;
     }
-    let notes = 0;
-    try { notes = await notifyPendingPullRequests(db, options.skipAi ? null : router, projectId, snapshot, result); }
-    catch (error) { console.error("pre-merge notification failed", { projectId, error }); }
-    return { ...persisted, aiApplied: result.aiApplied, aiError: result.aiError, replan, replanError, notes };
   } finally {
     await lock.query("select pg_advisory_unlock(hashtext('analysis:' || $1))", [projectId]).catch(() => {});
     lock.release();
   }
+  let notes = 0;
+  try { notes = await notifyPendingPullRequests(db, options.skipAi ? null : router, projectId, snapshot, result); }
+  catch (error) { console.error("pre-merge notification failed", { projectId, error }); }
+  return { ...persisted, aiApplied: result.aiApplied, aiError: result.aiError, replan, replanError, notes };
 }
 
 export interface ScheduleAnalysisOptions { periodic?: boolean }

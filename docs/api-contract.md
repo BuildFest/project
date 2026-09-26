@@ -497,7 +497,7 @@ type PlanChange =
   | { op: "update_milestone"; milestone_id: string; changes: { target_at?: string | null; name?: string } };
 ```
 
-### 5.8 ✅ `GET /projects/:projectId/maintainer-notes`
+### 5.8 ✅ `GET /projects/:projectId/pr-notes`
 
 Returns the newest pre-merge coordination notes for the dashboard. These notes
 cover collision risk, incomplete dependencies, task scope and plan alignment;

@@ -147,14 +147,14 @@ export function registerIntelligenceRoutes(app: Hono, db: Db) {
     return c.json(evidence ?? notFound("task"));
   });
 
-  app.get("/projects/:projectId/maintainer-notes", async (c) => {
+  app.get("/projects/:projectId/pr-notes", async (c) => {
     const projectId = c.req.param("projectId");
     const project = await db.query("select 1 from projects where project_id=$1", [projectId]);
     if (!project.rowCount) return notFound("project");
     const requested = Number(c.req.query("limit") ?? 50);
     const limit = Number.isInteger(requested) && requested > 0 ? Math.min(requested, 200) : 50;
     const { rows } = await db.query(
-      `select * from maintainer_notes where project_id=$1 order by created_at desc,note_id desc limit $2`,
+      `select * from pr_notes where project_id=$1 order by created_at desc,note_id desc limit $2`,
       [projectId, limit],
     );
     return c.json(rows);

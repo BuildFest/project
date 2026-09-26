@@ -43,7 +43,9 @@ const NoteReply = z.object({
   cited_fact_ids: z.array(z.string().min(1)).max(20),
 });
 
-const CODE_REVIEW_LANGUAGE = /\b(refactor|code quality|cleaner|bug|test coverage|naming|performance|security vulnerability|function|class)\b/i;
+// Reject review instructions, not ordinary project language such as
+// "bug tracker", "function rollout", or a task named "CSS class cleanup".
+const CODE_REVIEW_LANGUAGE = /\b(code quality|refactor(?: this| the)?|rename (?:this|the)|rewrite (?:this|the)|test coverage|add (?:more )?tests?|fix (?:a |the )?bug|performance optimization|security vulnerability)\b/i;
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
@@ -65,11 +67,16 @@ export function coordinationFacts(
   const taskId = taskForEvent(snapshot, result, event);
   const task = snapshot.tasks.find((candidate) => candidate.task_id === taskId);
   const stateByTask = new Map(result.states.map((state) => [state.task_id, state]));
+  const dismissedSignals = new Set((snapshot.openSignals ?? []).filter((item) => item.status === "dismissed").map((item) => item.fingerprint));
+  const dismissedCollisions = new Set((snapshot.openCollisions ?? [])
+    .filter((item) => item.status === "dismissed")
+    .map((item) => `${item.repository_id}\0${item.branch_a}\0${item.branch_b}`));
   const facts: CoordinationFact[] = [];
 
   for (const collision of result.collisions) {
     if (collision.repository_id !== event.repository_id || !event.branch ||
         (collision.branch_a !== event.branch && collision.branch_b !== event.branch)) continue;
+    if (dismissedCollisions.has(`${collision.repository_id}\0${collision.branch_a}\0${collision.branch_b}`)) continue;
     const other = collision.branch_a === event.branch ? collision.branch_b : collision.branch_a;
     facts.push({
       id: `collision:${event.repository_id}:${collision.branch_a}:${collision.branch_b}`,
@@ -98,6 +105,7 @@ export function coordinationFacts(
       evidence_event_ids: [event.event_id],
     });
     for (const signal of result.signals.filter((item) => item.related_task_ids.includes(task.task_id))) {
+      if (dismissedSignals.has(signal.fingerprint)) continue;
       facts.push({
         id: `signal:${signal.fingerprint}`,
         kind: "plan_signal",
@@ -180,11 +188,28 @@ export async function generatePreMergeNote(
 async function persistRuns(db: Db, projectId: string, sourceEventId: string, runs: CapturedRun[]) {
   for (const run of runs) {
     await db.query(`insert into ai_runs
-      (run_id,project_id,job,provider,model,input_tokens,output_tokens,duration_ms,status,error,source_event_id)
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [newId("airun"), projectId, run.job, run.provider, run.model, run.inputTokens, run.outputTokens,
-       run.durationMs, run.error ? "failed" : "success", run.error, sourceEventId]);
+      (run_id,project_id,job,tier,provider,model,input_tokens,output_tokens,duration_ms,cached,error,source_event_id)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,$10,$11)`,
+      [newId("airun"), projectId, run.job, run.job === "diff_summary" ? "fast" : "smart",
+       run.provider ?? "unknown", run.model ?? "unknown", run.inputTokens, run.outputTokens,
+       run.durationMs, run.error, sourceEventId]);
   }
+}
+
+export function pendingPullRequestEvents(events: GithubEvent[]): GithubEvent[] {
+  const latest = new Map<string, GithubEvent>();
+  for (const event of events) {
+    if (!event.pull_request) continue;
+    const key = `${event.repository_id}:${event.pull_request.number}`;
+    const prior = latest.get(key);
+    if (!prior || event.occurred_at > prior.occurred_at ||
+        (event.occurred_at.getTime() === prior.occurred_at.getTime() && event.event_id > prior.event_id)) {
+      latest.set(key, event);
+    }
+  }
+  return [...latest.values()].filter((event) =>
+    ["pull_request_opened", "pull_request_updated", "pull_request_reopened"].includes(event.event_type),
+  );
 }
 
 /** Creates at most one dashboard note for each PR opened/synchronized event. */
@@ -195,26 +220,28 @@ export async function notifyPendingPullRequests(
   snapshot: ProjectSnapshot,
   result: AnalysisResult,
 ): Promise<number> {
-  const candidates = snapshot.events.filter((event) =>
-    ["pull_request_opened", "pull_request_updated", "pull_request_reopened"].includes(event.event_type),
-  );
+  const candidates = pendingPullRequestEvents(snapshot.events);
   let inserted = 0;
   for (const event of candidates) {
     if (!event.pull_request || !event.branch) continue;
-    const exists = await db.query("select 1 from maintainer_notes where project_id=$1 and source_event_id=$2", [projectId, event.event_id]);
-    if (exists.rowCount) continue;
     const { taskId, facts } = coordinationFacts(snapshot, result, event);
+    const evidence = unique([event.event_id, ...facts.flatMap((fact) => fact.evidence_event_ids)]);
+    // Reserve the event with a complete rules note before any model call. This
+    // makes concurrent analysis runs idempotent without holding the project
+    // analysis lock while waiting on external providers.
+    const reserved = await db.query(`insert into pr_notes
+      (note_id,project_id,repository_id,source_event_id,pull_request_number,branch,task_id,note,facts,evidence_event_ids,generated_by)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'rules')
+      on conflict (project_id,source_event_id) do nothing returning note_id`,
+      [newId("note"), projectId, event.repository_id, event.event_id, event.pull_request.number,
+       event.branch, taskId, rulesNote(event, facts), JSON.stringify(facts), evidence]);
+    if (!reserved.rowCount) continue;
     const runs: CapturedRun[] = [];
     const generated = await generatePreMergeNote(router, event, facts, runs);
     await persistRuns(db, projectId, event.event_id, runs);
-    const evidence = unique([event.event_id, ...facts.flatMap((fact) => fact.evidence_event_ids)]);
-    const saved = await db.query(`insert into maintainer_notes
-      (note_id,project_id,repository_id,source_event_id,pull_request_number,branch,task_id,note,facts,evidence_event_ids,generated_by)
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-      on conflict (project_id,source_event_id) do nothing`,
-      [newId("note"), projectId, event.repository_id, event.event_id, event.pull_request.number,
-       event.branch, taskId, generated.note, JSON.stringify(facts), evidence, generated.generatedBy]);
-    inserted += saved.rowCount ?? 0;
+    await db.query("update pr_notes set note=$2,generated_by=$3 where note_id=$1",
+      [reserved.rows[0].note_id, generated.note, generated.generatedBy]);
+    inserted++;
   }
   return inserted;
 }

@@ -51,14 +51,18 @@ export async function persistAnalysis(tx: pg.PoolClient, projectId: string, snap
        state.last_activity_at, state.blocking_task_ids, state.explanation, state.computation_method]);
     counts.states += changed.rowCount ?? 0;
   }
+  const removedStates = await tx.query(`delete from derived_task_states d using tasks t
+    where d.project_id=$1 and t.project_id=d.project_id and t.task_id=d.task_id
+      and (t.archived or t.plan_status='cancelled')`, [projectId]);
+  counts.states += removedStates.rowCount ?? 0;
 
   const desiredSignals = new Map(result.signals.map((signal) => [signal.fingerprint, signal]));
   for (const stored of snapshot.openSignals) {
     const desired = desiredSignals.get(stored.fingerprint);
     if (!desired) {
-      await tx.query("update health_signals set status='resolved', resolved_at=now() where signal_id=$1", [stored.signal_id]);
-      counts.signals++;
-      if (stored.status === "active") await timeline(tx, projectId, "signal_resolved", `${stored.title} resolved`, "health_signal", stored.signal_id, stored.related_task_ids);
+      const resolved = await tx.query("update health_signals set status='resolved', resolved_at=now() where signal_id=$1 and status=$2", [stored.signal_id, stored.status]);
+      counts.signals += resolved.rowCount ?? 0;
+      if (resolved.rowCount && stored.status === "active") await timeline(tx, projectId, "signal_resolved", `${stored.title} resolved`, "health_signal", stored.signal_id, stored.related_task_ids);
     } else if (stored.status === "active") {
       const updated = await tx.query(`update health_signals set severity=$2,title=$3,explanation=$4,
         related_task_ids=$5,related_milestone_ids=$6,evidence_event_ids=$7
@@ -86,9 +90,9 @@ export async function persistAnalysis(tx: pg.PoolClient, projectId: string, snap
     const key = `${stored.repository_id}\0${stored.branch_a}\0${stored.branch_b}`;
     const desired = desiredCollisions.get(key);
     if (!desired) {
-      await tx.query("update collisions set status='resolved', resolved_at=now() where collision_id=$1", [stored.collision_id]);
-      counts.collisions++;
-      if (stored.status === "active") await timeline(tx, projectId, "collision_resolved", `Collision risk resolved: ${stored.branch_a} and ${stored.branch_b}`, "collision", stored.collision_id, [stored.task_a_id, stored.task_b_id].filter((id): id is string => id !== null));
+      const resolved = await tx.query("update collisions set status='resolved', resolved_at=now() where collision_id=$1 and status=$2", [stored.collision_id, stored.status]);
+      counts.collisions += resolved.rowCount ?? 0;
+      if (resolved.rowCount && stored.status === "active") await timeline(tx, projectId, "collision_resolved", `Collision risk resolved: ${stored.branch_a} and ${stored.branch_b}`, "collision", stored.collision_id, [stored.task_a_id, stored.task_b_id].filter((id): id is string => id !== null));
     } else if (stored.status === "active") {
       const updated = await tx.query(`update collisions set task_a_id=$2,task_b_id=$3,overlapping_files=$4
         where collision_id=$1 and (task_a_id,task_b_id,overlapping_files)

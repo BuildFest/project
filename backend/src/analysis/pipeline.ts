@@ -42,10 +42,26 @@ export async function analyzeProject(
   const review = router
     ? await reviewAnalysis(router, { tasks: snapshot.tasks, states: ruleStates, signals: ruleSignals, events: snapshot.events })
     : { states: ruleStates, signals: ruleSignals, applied: false, error: null };
+  // Task decisions made by the reviewer can change which health conditions
+  // are true. Re-derive them from the final states, then retain AI wording for
+  // conditions that still exist. Suppressed rule signals stay suppressed.
+  const finalRuleSignals = deriveHealthSignals({
+    project: snapshot.project, milestones: snapshot.milestones, tasks: snapshot.tasks,
+    dependencies: snapshot.dependencies, states: review.states, events: snapshot.events,
+    links: snapshot.links, now,
+  });
+  const reviewedByFingerprint = new Map(review.signals.map((signal) => [signal.fingerprint, signal]));
+  const originalFingerprints = new Set(ruleSignals.map((signal) => signal.fingerprint));
+  const signals = finalRuleSignals.flatMap((signal) => {
+    const reviewed = reviewedByFingerprint.get(signal.fingerprint);
+    if (reviewed) return [reviewed];
+    if (review.applied && originalFingerprints.has(signal.fingerprint)) return [];
+    return [signal];
+  });
   return {
     branches,
     states: review.states,
-    signals: review.signals,
+    signals,
     collisions,
     aiApplied: review.applied,
     aiError: review.error,

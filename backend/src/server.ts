@@ -26,7 +26,7 @@ const db = createPool();
 const router = createModelRouter(loadAiConfig());
 const scheduleAnalysis = createAnalysisScheduler(db, router);
 startAnalysisSweep(db, scheduleAnalysis);
-const analyzeProjects = (projectIds: string[]) => projectIds.forEach(scheduleAnalysis);
+const analyzeProjects = (projectIds: string[]) => projectIds.forEach((projectId) => scheduleAnalysis(projectId));
 
 // After each push to a feature branch, recompute its changed files (debounced).
 const refreshBranches = createCompareScheduler(db);

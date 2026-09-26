@@ -1,12 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import EmbeddedPostgres from "embedded-postgres";
 import pg from "pg";
+import { migrate } from "../src/migrations.js";
 
-const SCHEMA = readFileSync(new URL("../../db/schema.sql", import.meta.url), "utf8");
-
-/** Starts a throwaway Postgres with db/schema.sql applied. Call stop() in afterAll. */
+/** Starts a throwaway Postgres migrated the same way production is. Call stop() in afterAll. */
 export async function startTestDb() {
   const dataDir = mkdtempSync(join(tmpdir(), "pitcrew-pg-"));
   const port = 50000 + Math.floor(Math.random() * 10000);
@@ -19,7 +18,7 @@ export async function startTestDb() {
   await postgres.start();
   await postgres.createDatabase("pitcrew_test");
   const pool = new pg.Pool({ connectionString: `postgres://postgres:test@localhost:${port}/pitcrew_test` });
-  await pool.query(SCHEMA);
+  await migrate(pool, () => {});
 
   return {
     pool,

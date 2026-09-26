@@ -12,8 +12,25 @@ export type BranchStatus = "active" | "merged" | "deleted";
  * already updated the branch.)
  */
 export function nextBranchStatus(current: BranchStatus | null, eventType: EventType): BranchStatus {
-  // TODO(you): decide the lifecycle. See the questions in chat.
-  return current ?? "active";
+  switch (eventType) {
+    // Merge-then-delete is GitHub's normal flow; "merged" is the more useful
+    // fact to keep. Both are excluded from collision detection anyway.
+    case "branch_deleted":
+      return current === "merged" ? "merged" : "deleted";
+    case "pull_request_merged":
+      return "merged";
+    // New work (or a re-created branch) makes it active again, even after a merge.
+    case "branch_created":
+    case "push":
+    case "pull_request_opened":
+    case "pull_request_reopened":
+    case "pull_request_updated":
+      return "active";
+    // Closing a PR unmerged doesn't change the branch; the work is still there.
+    case "pull_request_closed":
+    case "commit":
+      return current ?? "active";
+  }
 }
 
 interface BranchRow {

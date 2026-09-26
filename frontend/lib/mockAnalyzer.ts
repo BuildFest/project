@@ -4,7 +4,7 @@
 // so the dashboard can be built and demoed before /state exists. The real
 // backend replaces all of this via GET /projects/:id/state.
 
-import { mockEventsFor, mockWorkspace } from "./mockApi";
+import { applyPlanChanges, mockEventsFor, mockWorkspace } from "./mockApi";
 import { planAsDerived } from "./ui";
 import type {
   Collision,
@@ -13,6 +13,8 @@ import type {
   EventTaskLink,
   GithubEvent,
   HealthSignal,
+  PlanChange,
+  ReplanSuggestion,
   ProjectState,
   ProjectWorkspace,
   Task,
@@ -338,4 +340,114 @@ export async function dismiss(projectId: string, id: string): Promise<void> {
   const all = read<Record<string, string[]>>(DISMISSED_KEY, {});
   all[projectId] = [...new Set([...(all[projectId] ?? []), id])];
   write(DISMISSED_KEY, all);
+}
+
+// ---- replan suggestions (mock of §5.7) ---------------------------------------
+// Rules-based: turns active signals into a small set of concrete plan edits.
+
+const REVIEWED_KEY = "pitcrew.mock.replans.reviewed.v1";
+
+function suggest(w: ProjectWorkspace): ReplanSuggestion[] {
+  const { state } = analyze(w);
+  const byId = new Map(w.tasks.map((t) => [t.task_id, t]));
+  const out: ReplanSuggestion[] = [];
+  const version = w.project.current_plan_version ?? 1;
+  const nowIso = new Date().toISOString();
+
+  const make = (id: string, rationale: string, changes: PlanChange[], signalIds: string[], ev: string[]) => {
+    if (!changes.length) return;
+    out.push({
+      suggestion_id: `rp_${id}`,
+      project_id: w.project.project_id,
+      based_on_plan_version: version,
+      status: "proposed",
+      rationale,
+      proposed_changes: changes,
+      evidence_event_ids: ev,
+      related_signal_ids: signalIds,
+      generated_by: "rules",
+      created_at: nowIso,
+      reviewed_by: null,
+      reviewed_at: null,
+    });
+  };
+
+  // 1. Work is running ahead of an unfinished dependency: prioritize the blocker.
+  for (const s of state.signals.filter((x) => x.type === "dependency_incomplete")) {
+    const [taskId, ...blockers] = s.related_task_ids;
+    const task = byId.get(taskId);
+    const changes: PlanChange[] = [];
+    for (const b of blockers) {
+      const bt = byId.get(b);
+      if (!bt) continue;
+      const upd: PlanChange & { op: "update_task" } = { op: "update_task", task_id: b, changes: {} };
+      if (bt.priority !== "critical") upd.changes.priority = "critical";
+      if (task?.target_at && (!bt.target_at || bt.target_at > task.target_at)) {
+        upd.changes.target_at = new Date(new Date(task.target_at).getTime() - 60 * 60 * 1000).toISOString();
+      }
+      if (Object.keys(upd.changes).length) changes.push(upd);
+    }
+    const keys = blockers.map((b) => byId.get(b)?.task_key).filter(Boolean).join(", ");
+    make(`dep_${taskId}`, `${task?.task_key} is already moving but depends on ${keys}. Prioritize ${keys} so it lands first.`,
+      changes, [s.signal_id], s.evidence_event_ids);
+  }
+
+  // 2. A milestone is slipping: drop optional work from it, then push the date.
+  for (const s of state.signals.filter((x) => x.type === "milestone_slipping")) {
+    const mid = s.related_milestone_ids[0];
+    const m = w.milestones.find((x) => x.milestone_id === mid);
+    if (!m) continue;
+    const open = s.related_task_ids.map((id) => byId.get(id)).filter((t): t is Task => !!t);
+    const optional = open.filter((t) => t.scope === "optional");
+    const changes: PlanChange[] = optional.map((t) => ({ op: "update_task", task_id: t.task_id, changes: { milestone_id: null } }));
+    let rationale = `Milestone "${m.name}" is at risk with ${open.length} open task${open.length === 1 ? "" : "s"}.`;
+    if (optional.length) {
+      rationale += ` Move optional work (${optional.map((t) => t.task_key).join(", ")}) out of it to protect the must-haves.`;
+    } else if (m.target_at) {
+      changes.push({
+        op: "update_milestone",
+        milestone_id: m.milestone_id,
+        changes: { target_at: new Date(new Date(m.target_at).getTime() + 2 * 60 * 60 * 1000).toISOString() },
+      });
+      rationale += " Everything left is must-have, so move the target back 2 hours instead of cutting scope.";
+    }
+    make(`ms_${mid}`, rationale, changes, [s.signal_id], []);
+  }
+
+  // 3. A must-have with no activity near the deadline and no owner.
+  for (const s of state.signals.filter((x) => x.type === "must_have_no_activity")) {
+    const t = byId.get(s.related_task_ids[0]);
+    if (!t || t.owner_member_id || !w.members.length) continue;
+    const load = new Map(w.members.map((mm) => [mm.member_id, 0]));
+    for (const x of w.tasks) if (!x.archived && x.owner_member_id && x.plan_status !== "complete") load.set(x.owner_member_id, (load.get(x.owner_member_id) ?? 0) + 1);
+    const least = [...load.entries()].sort((a, b) => a[1] - b[1])[0][0];
+    const who = w.members.find((mm) => mm.member_id === least)!;
+    make(`own_${t.task_id}`, `${t.task_key} is required, close to its deadline, and nobody owns it. ${who.display_name} currently has the fewest open tasks.`,
+      [{ op: "update_task", task_id: t.task_id, changes: { owner_member_id: least, priority: "high" } }], [s.signal_id], []);
+  }
+
+  const reviewed = new Set(read<Record<string, string[]>>(REVIEWED_KEY, {})[w.project.project_id] ?? []);
+  return out.filter((r) => !reviewed.has(r.suggestion_id));
+}
+
+function markReviewed(pid: string, id: string) {
+  const all = read<Record<string, string[]>>(REVIEWED_KEY, {});
+  all[pid] = [...new Set([...(all[pid] ?? []), id])];
+  write(REVIEWED_KEY, all);
+}
+
+export async function listReplans(projectId: string): Promise<ReplanSuggestion[]> {
+  return suggest(mockWorkspace(projectId));
+}
+
+export async function acceptReplan(projectId: string, suggestionId: string) {
+  const s = suggest(mockWorkspace(projectId)).find((x) => x.suggestion_id === suggestionId);
+  if (!s) throw new Error("That suggestion is no longer current.");
+  const w = await applyPlanChanges(projectId, s.proposed_changes);
+  markReviewed(projectId, suggestionId);
+  return { plan_version: w.project.current_plan_version ?? 1 };
+}
+
+export async function rejectReplan(projectId: string, suggestionId: string) {
+  markReviewed(projectId, suggestionId);
 }

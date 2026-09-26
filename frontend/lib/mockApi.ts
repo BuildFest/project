@@ -3,7 +3,10 @@
 // which one to call — components never import this file directly.
 
 import type {
+  AccessLevel,
+  PlanChange,
   GithubEvent,
+  ProjectMember,
   Milestone,
   Page,
   ProjectWorkspace,
@@ -482,4 +485,98 @@ export async function startBackfill(projectId: string, repositoryId: string) {
   if (r) r.last_backfill_at = new Date().toISOString();
   localStorage.setItem(REPOS_KEY, JSON.stringify(all));
   return { started_at: new Date().toISOString() };
+}
+
+// ============================================================================
+// Team members (mock) — contract §2.6–2.7, plus remove (not in contract yet)
+// ============================================================================
+
+
+export type MemberInput = {
+  display_name: string;
+  github_login?: string | null;
+  role_label?: string | null;
+  access_level?: AccessLevel;
+};
+
+export async function addMember(projectId: string, input: MemberInput) {
+  return mutate(projectId, (w) => {
+    const login = input.github_login?.trim().replace(/^@/, "") || null;
+    if (login && w.members.some((m) => m.github_login?.toLowerCase() === login.toLowerCase())) {
+      throw new Error(`@${login} is already on this team.`);
+    }
+    const m: ProjectMember = {
+      member_id: newId("mem"),
+      project_id: projectId,
+      display_name: input.display_name.trim() || login || "Teammate",
+      role_label: input.role_label?.trim() || null,
+      github_login: login,
+      access_level: input.access_level ?? "editor",
+      joined_at: new Date().toISOString(),
+    };
+    w.members.push(m);
+  });
+}
+
+export async function updateMember(projectId: string, memberId: string, patch: Partial<MemberInput>) {
+  return mutate(projectId, (w) => {
+    const m = w.members.find((x) => x.member_id === memberId);
+    if (!m) throw new Error("Member not found");
+    if (patch.github_login !== undefined) {
+      const login = patch.github_login?.trim().replace(/^@/, "") || null;
+      if (login && w.members.some((x) => x.member_id !== memberId && x.github_login?.toLowerCase() === login.toLowerCase())) {
+        throw new Error(`@${login} is already on this team.`);
+      }
+      m.github_login = login;
+    }
+    if (patch.display_name !== undefined) m.display_name = patch.display_name.trim() || m.display_name;
+    if (patch.role_label !== undefined) m.role_label = patch.role_label?.trim() || null;
+    if (patch.access_level !== undefined) m.access_level = patch.access_level;
+  });
+}
+
+export async function removeMember(projectId: string, memberId: string) {
+  return mutate(projectId, (w) => {
+    w.members = w.members.filter((m) => m.member_id !== memberId);
+    for (const t of w.tasks) if (t.owner_member_id === memberId) t.owner_member_id = null;
+  });
+}
+
+// Apply an accepted replan's operations to the plan (mock of §5.7 accept).
+export async function applyPlanChanges(projectId: string, changes: PlanChange[]) {
+  return mutate(projectId, (w) => {
+    for (const c of changes) {
+      if (c.op === "update_task") {
+        const t = w.tasks.find((x) => x.task_id === c.task_id);
+        if (t) Object.assign(t, c.changes);
+      } else if (c.op === "create_task") {
+        const n = w.project.next_task_number++;
+        w.tasks.push({
+          task_id: newId("task"),
+          task_key: `${w.project.task_key_prefix}-${n}`,
+          project_id: projectId,
+          title: c.task.title,
+          description: c.task.description ?? null,
+          owner_member_id: c.task.owner_member_id ?? null,
+          priority: c.task.priority ?? "medium",
+          scope: c.task.scope ?? "must_have",
+          plan_status: c.task.plan_status ?? "not_started",
+          milestone_id: c.task.milestone_id ?? null,
+          target_at: c.task.target_at ?? null,
+          sort_order: w.tasks.length,
+          archived: false,
+        });
+      } else if (c.op === "add_dependency") {
+        if (!w.dependencies.some((d) => d.task_id === c.task_id && d.depends_on_task_id === c.depends_on_task_id)) {
+          w.dependencies.push({ project_id: projectId, task_id: c.task_id, depends_on_task_id: c.depends_on_task_id, dependency_type: "requires" });
+        }
+      } else if (c.op === "remove_dependency") {
+        w.dependencies = w.dependencies.filter((d) => !(d.task_id === c.task_id && d.depends_on_task_id === c.depends_on_task_id));
+      } else if (c.op === "update_milestone") {
+        const m = w.milestones.find((x) => x.milestone_id === c.milestone_id);
+        if (m) Object.assign(m, c.changes);
+      }
+    }
+    w.project.current_plan_version = (w.project.current_plan_version ?? 1) + 1;
+  });
 }

@@ -102,7 +102,9 @@ input[type="datetime-local"]::-webkit-datetime-edit-year-field,
 input[type="datetime-local"]::-webkit-datetime-edit-hour-field,
 input[type="datetime-local"]::-webkit-datetime-edit-minute-field,
 input[type="datetime-local"]::-webkit-datetime-edit-ampm-field {
-  color: var(--pc-header);
+  color: var(--pc-header) !important;
+  -webkit-text-fill-color: var(--pc-header);
+  background: transparent;
 }
 input[type="datetime-local"]:invalid::-webkit-datetime-edit,
 input[type="datetime-local"]:not(:valid)::-webkit-datetime-edit {

@@ -8,6 +8,7 @@ import * as analyzer from "./mockAnalyzer";
 import * as mock from "./mockApi";
 import type {
   ApiErrorBody,
+  ReplanSuggestion,
   ConnectRepositoryResult,
   Repository,
   DerivedStatus,
@@ -23,8 +24,8 @@ import type {
 } from "./types";
 
 export { wouldCreateCycle } from "./mockApi";
-export type { CreateProjectInput, TaskPatch } from "./mockApi";
-import type { CreateProjectInput, TaskPatch } from "./mockApi";
+export type { CreateProjectInput, MemberInput, TaskPatch } from "./mockApi";
+import type { CreateProjectInput, MemberInput, TaskPatch } from "./mockApi";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || "";
 export const usingMockApi = !API_URL;
@@ -226,4 +227,60 @@ export async function connectRepository(projectId: string, fullName: string): Pr
 export async function startBackfill(projectId: string, repositoryId: string): Promise<{ started_at: string }> {
   if (usingMockApi) return mock.startBackfill(projectId, repositoryId);
   return http("POST", `/projects/${enc(projectId)}/repositories/${enc(repositoryId)}/backfill`);
+}
+
+// ---- team members (contract §2.6–2.7; remove is not in the contract yet) ------
+
+export async function addMember(projectId: string, input: MemberInput) {
+  if (usingMockApi) return mock.addMember(projectId, input);
+  await http("POST", `/projects/${enc(projectId)}/members`, input);
+  return reload(projectId);
+}
+
+export async function updateMember(projectId: string, memberId: string, patch: Partial<MemberInput>) {
+  if (usingMockApi) return mock.updateMember(projectId, memberId, patch);
+  await http("PATCH", `/projects/${enc(projectId)}/members/${enc(memberId)}`, patch);
+  return reload(projectId);
+}
+
+export async function removeMember(projectId: string, memberId: string) {
+  if (usingMockApi) return mock.removeMember(projectId, memberId);
+  try {
+    await http("DELETE", `/projects/${enc(projectId)}/members/${enc(memberId)}`);
+  } catch (e) {
+    if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
+      throw new ApiError("Removing members isn't supported by the backend yet.", e.status);
+    }
+    throw e;
+  }
+  return reload(projectId);
+}
+
+// ---- replan suggestions (contract §5.7) ----------------------------------------
+
+export async function listReplans(projectId: string): Promise<ReplanSuggestion[]> {
+  if (usingMockApi) return analyzer.listReplans(projectId);
+  return http<ReplanSuggestion[]>("GET", `/projects/${enc(projectId)}/replans?status=proposed`);
+}
+
+// Applies the changes to the plan (server-side, in one transaction) and
+// returns the refreshed workspace plus the new plan version.
+export async function acceptReplan(projectId: string, suggestionId: string, memberId: string) {
+  let version: number;
+  if (usingMockApi) {
+    version = (await analyzer.acceptReplan(projectId, suggestionId)).plan_version;
+  } else {
+    const r = await http<{ suggestion: ReplanSuggestion; plan_version: number }>(
+      "POST",
+      `/projects/${enc(projectId)}/replans/${enc(suggestionId)}/accept`,
+      { member_id: memberId }
+    );
+    version = r.plan_version;
+  }
+  return { workspace: await reload(projectId), plan_version: version };
+}
+
+export async function rejectReplan(projectId: string, suggestionId: string, memberId: string) {
+  if (usingMockApi) return analyzer.rejectReplan(projectId, suggestionId);
+  await http("POST", `/projects/${enc(projectId)}/replans/${enc(suggestionId)}/reject`, { member_id: memberId });
 }

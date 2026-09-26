@@ -235,7 +235,7 @@ export interface ReplanSuggestion {
   based_on_plan_version: number;
   status: "proposed" | "accepted" | "rejected" | "superseded";
   rationale: string;
-  proposed_changes: Array<{ op: string; [key: string]: unknown }>;
+  proposed_changes: PlanChange[];
   evidence_event_ids: string[];
   related_signal_ids: string[];
   generated_by: "rules" | "llm";
@@ -325,3 +325,23 @@ export interface ConnectRepositoryResult {
   webhook_url: string;
   webhook_secret: string; // only ever shown here; GET never returns it
 }
+
+// Contract §5.7 — the closed set of plan operations a replan can propose.
+export type PlanChangeTaskFields = Partial<{
+  title: string;
+  description: string | null;
+  owner_member_id: string | null;
+  priority: Priority;
+  scope: Scope;
+  plan_status: PlanStatus;
+  milestone_id: string | null;
+  target_at: string | null;
+  sort_order: number;
+}>;
+
+export type PlanChange =
+  | { op: "update_task"; task_id: string; changes: PlanChangeTaskFields }
+  | { op: "create_task"; task: PlanChangeTaskFields & { title: string } }
+  | { op: "add_dependency"; task_id: string; depends_on_task_id: string }
+  | { op: "remove_dependency"; task_id: string; depends_on_task_id: string }
+  | { op: "update_milestone"; milestone_id: string; changes: { target_at?: string | null; name?: string } };

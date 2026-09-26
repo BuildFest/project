@@ -292,24 +292,29 @@ interface Page<T> {
 
 These endpoints are proposed by A. B confirms or edits them in the PR.
 
-### 5.1 📝 `GET /projects/:projectId/state`
+### 5.1 ✅ `GET /projects/:projectId/state`
 Everything the dashboard needs to paint the "plan vs reality" view in one
-call. The dashboard polls this.
+call. The dashboard polls this. It only reads; it never triggers analysis.
 
 ```ts
 interface ProjectState {
-  computed_at: string;                     // latest analyzer run
-  tasks: DerivedTaskState[];               // one per non-archived task that has been analyzed
-  signals: HealthSignal[];                 // status = "active" only
-  collisions: Collision[];                 // status = "active" only
-  pending_links: EventTaskLink[];          // status = "suggested", awaiting human review
+  computed_at: string | null;              // latest analyzer write; null if never analyzed
+  tasks: DerivedTaskState[];               // one per non-archived task that has been analyzed, plan order
+  signals: HealthSignal[];                 // status = "active" only, newest first
+  collisions: Collision[];                 // status = "active" only, newest first
+  pending_links: Array<EventTaskLink & { event: GithubEvent }>;  // status = "suggested", newest event first
   open_replans: number;                    // count of status = "proposed"
 }
 ```
-→ `200 ProjectState`
+→ `200 ProjectState` · `404`
 
 A task with no `DerivedTaskState` row hasn't been analyzed yet. Show its
 `plan_status` alone.
+
+`pending_links` includes AI suggestions at or above 0.8 confidence. Those
+already count toward the task's derived status (shown as AI-inferred), but they
+stay in the review queue until someone confirms or rejects them. Each link has
+a `reason: string | null` explaining why it was made.
 
 ### 5.2 📝 `GET /projects/:projectId/tasks/:taskId/evidence`
 Answers "why does Pit Crew believe this?" (tech doc §17).

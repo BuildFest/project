@@ -38,21 +38,36 @@ function exposedIds(toolResults: Record<string, unknown>) {
 function fallback(facts: MaintainerFacts, kind: "digest" | "ask", question?: string, error: unknown = null): MaintainerOutput {
   const citations: MaintainerCitation[] = [];
   const lines: string[] = [];
-  if (facts.signals.length) {
+  const query = (question ?? "").toLowerCase();
+  const asksAttention = /attention|risk|block|problem|concern|stuck/.test(query);
+  const asksChanges = /change|recent|happen|merge|commit|pull request|\bpr\b/.test(query);
+  const matchingTasks = kind === "ask"
+    ? facts.tasks.filter((task) => {
+        const haystack = `${task.task_key ?? ""} ${task.title ?? ""}`.toLowerCase();
+        return haystack.split(/\s+/).some((term) => term.length > 2 && query.includes(term));
+      })
+    : [];
+  for (const task of matchingTasks.slice(0, 3)) {
+    const state = facts.states.find((item) => item.task_id === task.task_id);
+    lines.push(`${task.task_key} ${task.title} is ${state?.effective_status ?? task.plan_status ?? "not yet analyzed"}.`);
+    citations.push({ type: "task", id: String(task.task_id) });
+  }
+  if (facts.signals.length && (kind === "digest" || asksAttention || matchingTasks.length === 0)) {
     lines.push(`${facts.signals.length} active health signal${facts.signals.length === 1 ? "" : "s"}.`);
     citations.push(...facts.signals.slice(0, 5).map((x) => ({ type: "signal" as const, id: String(x.signal_id) })));
   }
-  if (facts.collisions.length) {
+  if (facts.collisions.length && (kind === "digest" || asksAttention || /branch|file|collision/.test(query))) {
     lines.push(`${facts.collisions.length} active branch collision risk${facts.collisions.length === 1 ? "" : "s"}.`);
     citations.push(...facts.collisions.slice(0, 5).map((x) => ({ type: "collision" as const, id: String(x.collision_id) })));
   }
   const recent = facts.events.slice(0, 3);
-  if (recent.length) {
+  if (recent.length && (kind === "digest" || asksChanges || lines.length === 0)) {
     lines.push(`${recent.length} recent repository event${recent.length === 1 ? "" : "s"} are available.`);
     citations.push(...recent.map((x) => ({ type: "event" as const, id: String(x.event_id) })));
   }
   if (!lines.length) lines.push("No analyzed repository activity or active risks are available yet.");
-  return { title: kind === "digest" ? "Project digest" : `Ask Pit Crew: ${question ?? "answer"}`, body: lines.join(" "), citations, generated_by: "rules", error: error ? String(error instanceof Error ? error.message : error) : null };
+  const body = kind === "ask" ? `For “${question}”: ${lines.join(" ")}` : lines.join(" ");
+  return { title: kind === "digest" ? "Project digest" : `Ask Pit Crew: ${question ?? "answer"}`, body, citations, generated_by: "rules", error: error ? String(error instanceof Error ? error.message : error) : null };
 }
 
 export async function runMaintainer(router: ModelRouter | null, facts: MaintainerFacts, kind: "digest" | "ask", question?: string): Promise<MaintainerOutput> {

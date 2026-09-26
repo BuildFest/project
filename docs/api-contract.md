@@ -368,6 +368,19 @@ and Q&A endpoints return deterministic grounded summaries.
 
 Digests also run periodically for active projects. Answers and digests are
 notes only: they never mutate tasks, events, plan versions, or accept replans.
+An initial digest sweep runs at server startup; later sweeps use
+`MAINTAINER_DIGEST_MS` (six hours by default). Ask Pit Crew is limited per
+project to `ASK_RATE_LIMIT_PER_MINUTE` requests per minute (default 20, `0`
+disables the limit) and returns `429` when exceeded. Without model keys, Ask
+Pit Crew still answers the actual question by matching it to grounded task
+state, active risks, and recent repository events.
+
+Integration note: `ai_runs` uses the shared audit columns (`run_id`,
+`project_id`, `job`, provider/model/token/duration/error fields) plus optional
+`tier`, `cached`, `status`, and `source_event_id`. `maintainer_notes` is a
+common superset: digest/Ask rows use `kind`, `title`, `body`, `question`, and
+`citations`; pre-merge rows use repository/PR fields, `note`, `facts`, and
+`evidence_event_ids`.
 
 ### 5.1 ✅ `GET /projects/:projectId/state`
 Everything the dashboard needs to paint the "plan vs reality" view in one

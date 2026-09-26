@@ -2,18 +2,21 @@ import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/api/app.js";
 import { startTestDb } from "./db.js";
+import { startMaintainerDigests } from "../src/maintainer/service.js";
 
 let db: Awaited<ReturnType<typeof startTestDb>>;
 let pool: pg.Pool;
 let app: ReturnType<typeof createApp>;
 
 beforeAll(async () => {
+  process.env.ASK_RATE_LIMIT_PER_MINUTE = "2";
   db = await startTestDb();
   pool = db.pool;
   app = createApp(pool);
 }, 120_000);
 
 afterAll(async () => {
+  delete process.env.ASK_RATE_LIMIT_PER_MINUTE;
   await db?.stop();
 });
 
@@ -240,11 +243,36 @@ describe("Maintainer API", () => {
     expect(answer.status).toBe(201);
     expect(answer.body).toMatchObject({ kind: "answer", question: "What needs attention?", generated_by: "rules" });
     expect(answer.body.citations).toContainEqual({ type: "signal", id: `sig_ask${n}` });
+    expect(answer.body.body).toContain("What needs attention?");
+  });
+
+  it("rate limits Ask Pit Crew per project", async () => {
+    const first = await seedProject();
+    const second = await seedProject();
+    for (const question of ["First question", "Second question"]) {
+      expect((await post(`/projects/${first.project}/ask`, { question })).status).toBe(201);
+    }
+    const limited = await post(`/projects/${first.project}/ask`, { question: "Third question" });
+    expect(limited).toMatchObject({ status: 429, body: { error: "Ask Pit Crew rate limit exceeded" } });
+    expect((await post(`/projects/${second.project}/ask`, { question: "Independent project" })).status).toBe(201);
   });
 
   it("returns 404 for missing projects", async () => {
     expect((await post("/projects/proj_missing/maintainer/digest")).status).toBe(404);
     expect((await post("/projects/proj_missing/ask", { question: "What changed?" })).status).toBe(404);
     expect((await get("/projects/proj_missing/maintainer/notes")).status).toBe(404);
+  });
+
+  it("runs an initial digest sweep without waiting for the interval", async () => {
+    const s = await seedProject();
+    const timer = startMaintainerDigests(pool, null, 1_000);
+    try {
+      let count = 0;
+      for (let attempt = 0; attempt < 50 && count === 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        count = (await pool.query("select count(*)::int n from maintainer_notes where project_id=$1 and kind='digest'", [s.project])).rows[0].n;
+      }
+      expect(count).toBe(1);
+    } finally { clearInterval(timer); }
   });
 });

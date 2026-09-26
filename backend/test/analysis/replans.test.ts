@@ -54,6 +54,24 @@ describe("replan validation and rules", () => {
     expect(ReplanChange.safeParse({ op: "update_task", task_id: "work", changes: {} }).success).toBe(false);
   });
 
+  it("accepts ISO timestamps and rejects natural-language dates", () => {
+    expect(ReplanChange.safeParse({
+      op: "update_task",
+      task_id: "work",
+      changes: { target_at: "2026-10-01" },
+    }).success).toBe(true);
+    expect(ReplanChange.safeParse({
+      op: "update_milestone",
+      milestone_id: "m1",
+      changes: { target_at: "2026-10-01T14:30:00-05:00" },
+    }).success).toBe(true);
+    expect(ReplanChange.safeParse({
+      op: "update_task",
+      task_id: "work",
+      changes: { target_at: "next week" },
+    }).success).toBe(false);
+  });
+
   it("drops missing IDs, no-ops, duplicates and dependency cycles", () => {
     const changes = validateReplanChanges(context(), [
       { op: "update_task", task_id: "missing", changes: { priority: "critical" } },
@@ -83,6 +101,20 @@ describe("replan validation and rules", () => {
   it("clears optional milestone assignment when no later milestone exists", () => {
     const draft = buildRuleReplan(context({ milestones: context().milestones.slice(0, 1) }));
     expect(draft?.changes).toContainEqual({ op: "update_task", task_id: "optional", changes: { milestone_id: null } });
+  });
+
+  it("does not defer optional tasks that are effectively complete", () => {
+    const completed = context();
+    completed.states = completed.states.map((item) =>
+      item.task_id === "optional" ? { ...item, effective_status: "complete" } : item,
+    );
+    const draft = buildRuleReplan(completed);
+    expect(draft?.changes).not.toContainEqual(
+      expect.objectContaining({ op: "update_task", task_id: "optional" }),
+    );
+    expect(draft?.changes).toEqual([
+      { op: "update_task", task_id: "blocker", changes: { priority: "critical" } },
+    ]);
   });
 });
 

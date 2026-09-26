@@ -4,7 +4,10 @@ import type { ModelRouter } from "../ai/router.js";
 import { withTransaction, type Db, type Queryable } from "../db.js";
 import { newId } from "../ids.js";
 
-const Timestamp = z.string().trim().min(1).nullable();
+// Postgres accepts both ISO dates and offset-qualified ISO date-times. Keep
+// model output to that deterministic subset instead of relying on its broad
+// natural-language timestamp parser (for example, "next week").
+const Timestamp = z.union([z.iso.date(), z.iso.datetime({ offset: true })]).nullable();
 const Priority = z.enum(["critical", "high", "medium", "low"]);
 const Scope = z.enum(["must_have", "optional"]);
 const PlanStatus = z.enum(["not_started", "in_progress", "blocked", "complete", "cancelled"]);
@@ -233,7 +236,11 @@ export function buildRuleReplan(context: ReplanContext): ReplanDraft | null {
         .filter((item) => !slipping?.target_at || (item.target_at !== null && item.target_at > slipping.target_at))
         .sort((a, b) => (a.target_at?.getTime() ?? Infinity) - (b.target_at?.getTime() ?? Infinity) || a.sort_order - b.sort_order)[0];
       for (const task of context.tasks.filter(
-        (item) => !item.archived && item.scope === "optional" && item.milestone_id === milestoneId,
+        (item) =>
+          !item.archived &&
+          item.scope === "optional" &&
+          item.milestone_id === milestoneId &&
+          stateByTask.get(item.task_id)?.effective_status !== "complete",
       )) {
         candidates.push({
           op: "update_task",

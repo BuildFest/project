@@ -295,8 +295,16 @@ backfilled ones with old `occurred_at`.
 
 Start from `after_seq=0`. `cursor` and `after_seq` can't be combined (`400`).
 
-### 4.6 📝 `GET /projects/:projectId/branches`
-→ `200 BranchState[]`, active first.
+### 4.6 ✅ `GET /projects/:projectId/branches`
+→ `200 BranchState[]`: active first, then merged, then deleted; most recent
+activity first within each. Query: `status?` (`active` | `merged` | `deleted`).
+`404` for an unknown project. Returned whole (tens of rows), not paginated.
+
+`changed_files` is the branch's diff against its merge base with the default
+branch (GitHub's three-dot compare), i.e. what merging it would change. It's
+refreshed a few seconds after each push; until the first refresh it's `[]`. The
+default branch always has `[]`. Renames list both the old and new path. GitHub
+caps the list at 300 files.
 
 ---
 

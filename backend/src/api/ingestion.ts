@@ -3,8 +3,10 @@ import { HTTPException } from "hono/http-exception";
 import type pg from "pg";
 import { requireEnv } from "../config.js";
 import { withTransaction, type Db } from "../db.js";
+import { githubHeaders } from "../github.js";
 import { newId } from "../ids.js";
 import { applyToBranchState } from "../ingestion/branches.js";
+import type { BranchRef } from "../ingestion/compare.js";
 import {
   normalizePullRequest,
   normalizePush,
@@ -29,17 +31,9 @@ interface GitHubRepo {
 }
 
 async function fetchGitHubRepo(fullName: string): Promise<GitHubRepo> {
-  const headers: Record<string, string> = {
-    accept: "application/vnd.github+json",
-    "user-agent": "pitcrew",
-    "x-github-api-version": "2022-11-28",
-  };
-  // Optional for public repos, required for private ones.
-  if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-
   let res: Response;
   try {
-    res = await fetch(`https://api.github.com/repos/${fullName}`, { headers });
+    res = await fetch(`https://api.github.com/repos/${fullName}`, { headers: githubHeaders() });
   } catch {
     throw new HTTPException(502, { message: "could not reach GitHub" });
   }
@@ -59,7 +53,9 @@ interface Delivery {
   receivedAt: string;
 }
 
-type IngestResult = { duplicate: true } | { duplicate: false; status: "normalized" | "ignored"; inserted: number };
+type IngestResult =
+  | { duplicate: true }
+  | { duplicate: false; status: "normalized" | "ignored"; inserted: number; pushedBranches: BranchRef[] };
 
 function normalize(githubEvent: string, payload: any, receivedAt: string): NormalizedEvent[] {
   if (githubEvent === "push") return normalizePush(payload as PushPayload, receivedAt);
@@ -92,6 +88,7 @@ async function ingestDelivery(tx: pg.PoolClient, d: Delivery): Promise<IngestRes
 
   const events = normalize(d.githubEvent, d.payload, d.receivedAt);
   let inserted = 0;
+  const pushedBranches: BranchRef[] = [];
 
   // The same GitHub repo can be connected to more than one project; each gets
   // its own copy of the events. Sorted so concurrent deliveries take the
@@ -120,6 +117,10 @@ async function ingestDelivery(tx: pg.PoolClient, d: Delivery): Promise<IngestRes
       inserted++;
       if (!latest || event.occurred_at > latest) latest = event.occurred_at;
       await applyToBranchState(tx, repo.project_id, repo.repository_id, event);
+      // A new head means the branch's changed files need recomputing.
+      if (event.branch && (event.event_type === "push" || event.event_type === "branch_created")) {
+        pushedBranches.push({ repositoryId: repo.repository_id, branch: event.branch });
+      }
     }
 
     // Any verified delivery proves the webhook is wired up.
@@ -138,13 +139,14 @@ async function ingestDelivery(tx: pg.PoolClient, d: Delivery): Promise<IngestRes
     `update webhook_deliveries set status = $2, processed_at = now() where github_delivery_id = $1`,
     [d.deliveryId, status],
   );
-  return { duplicate: false, status, inserted };
+  return { duplicate: false, status, inserted, pushedBranches };
 }
 
 export function registerIngestionRoutes(
   app: Hono,
   db: Db,
   onEventsIngested?: (projectIds: string[]) => void,
+  onBranchesPushed?: (refs: BranchRef[]) => void,
 ) {
   app.post("/projects/:projectId/repositories", async (c) => {
     const input = await parseBody(c, ConnectRepositoryInput);
@@ -241,6 +243,7 @@ export function registerIngestionRoutes(
     if (result.inserted > 0) {
       onEventsIngested?.([...new Set(repos.map((repo) => repo.project_id))]);
     }
+    if (result.pushedBranches.length > 0) onBranchesPushed?.(result.pushedBranches);
     return c.json({ status: result.status, events: result.inserted }, 202);
   });
 }

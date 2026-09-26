@@ -4,7 +4,9 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { withTransaction, type Db, type Queryable } from "../db.js";
 import { newId } from "../ids.js";
+import type { BranchRef } from "../ingestion/compare.js";
 import { pgErrorToHttp } from "./errors.js";
+import { registerBranchRoutes } from "./branches.js";
 import { registerEventRoutes } from "./events.js";
 import { notFound, parseBody } from "./http.js";
 import { registerIngestionRoutes } from "./ingestion.js";
@@ -44,7 +46,11 @@ async function updateRow(
   return rows[0] ?? null;
 }
 
-export function createApp(db: Db, onEventsIngested?: (projectIds: string[]) => void) {
+export function createApp(
+  db: Db,
+  onEventsIngested?: (projectIds: string[]) => void,
+  onBranchesPushed?: (refs: BranchRef[]) => void,
+) {
   const app = new Hono();
 
   app.use("*", cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:3000" }));
@@ -194,7 +200,7 @@ export function createApp(db: Db, onEventsIngested?: (projectIds: string[]) => v
 
   // ---- repositories and webhooks (src/api/ingestion.ts) ---------------------
 
-  registerIngestionRoutes(app, db, onEventsIngested);
+  registerIngestionRoutes(app, db, onEventsIngested, onBranchesPushed);
 
   // ---- project intelligence (src/api/intelligence.ts) -----------------------
 
@@ -203,6 +209,10 @@ export function createApp(db: Db, onEventsIngested?: (projectIds: string[]) => v
   // ---- events (src/api/events.ts) ------------------------------------------
 
   registerEventRoutes(app, db);
+
+  // ---- branches (src/api/branches.ts) --------------------------------------
+
+  registerBranchRoutes(app, db);
 
   return app;
 }

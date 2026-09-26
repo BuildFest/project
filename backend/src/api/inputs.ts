@@ -94,6 +94,10 @@ export const ListEventsQuery = z
   })
   .refine((q) => q.cursor === undefined || q.after_seq === undefined, "use either cursor or after_seq, not both");
 
+export const ListBranchesQuery = z.object({
+  status: z.enum(["active", "merged", "deleted"]).optional(),
+});
+
 export const CreateDependencyInput = z.object({
   task_id: z.string().min(1),
   depends_on_task_id: z.string().min(1),

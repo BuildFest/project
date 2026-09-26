@@ -8,6 +8,7 @@ import { linkProjectEvents } from "./analysis/linkEvents.js";
 import { createApp } from "./api/app.js";
 import { requireEnv } from "./config.js";
 import { createPool } from "./db.js";
+import { createCompareScheduler } from "./ingestion/compare.js";
 
 // Railway supplies environment variables directly; local development uses
 // backend/.env when present. The file is gitignored.
@@ -32,6 +33,9 @@ const analyzeProjects = (projectIds: string[]) => {
   }
 };
 
-serve({ fetch: createApp(db, analyzeProjects).fetch, port }, (info) => {
+// After each push to a feature branch, recompute its changed files (debounced).
+const refreshBranches = createCompareScheduler(db);
+
+serve({ fetch: createApp(db, analyzeProjects, refreshBranches).fetch, port }, (info) => {
   console.log(`Pit Crew API listening on port ${info.port}`);
 });

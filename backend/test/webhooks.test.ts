@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/api/app.js";
+import { createCompareScheduler, refreshChangedFiles } from "../src/ingestion/compare.js";
 import { normalizePullRequest, normalizePush } from "../src/ingestion/normalize.js";
 import { verifyGitHubSignature } from "../src/ingestion/verify.js";
 import { startTestDb } from "./db.js";
@@ -10,6 +11,7 @@ const SECRET = "test-webhook-secret";
 let db: Awaited<ReturnType<typeof startTestDb>>;
 let app: ReturnType<typeof createApp>;
 const onEventsIngested = vi.fn();
+const onBranchesPushed = vi.fn();
 
 // Each connected repo gets its own GitHub id: the same id connected to two
 // projects fans deliveries out to both, which would couple tests.
@@ -27,7 +29,7 @@ beforeAll(async () => {
     return Response.json({ id, name, full_name: fullName, default_branch: "main", owner: { login: owner } });
   });
   db = await startTestDb();
-  app = createApp(db.pool, onEventsIngested);
+  app = createApp(db.pool, onEventsIngested, onBranchesPushed);
 }, 120_000);
 
 afterAll(async () => {
@@ -340,5 +342,95 @@ describe("GET /projects/:projectId/events", () => {
     expect((await call("GET", `/projects/${projectId}/events?after_seq=0&cursor=5`)).status).toBe(400);
     expect((await call("GET", `/projects/${projectId}/events?limit=zero`)).status).toBe(400);
     expect((await call("GET", "/projects/proj_nope/events")).status).toBe(404);
+  });
+});
+
+describe("branch changed files (compare API)", () => {
+  // A fake GitHub compare endpoint: records calls, answers with `files`.
+  function compareFetch(files: object[], onCall?: () => Promise<void>) {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      calls.push(url);
+      await onCall?.();
+      return Response.json({ files });
+    }) as unknown as typeof fetch;
+    return { calls, fetchImpl };
+  }
+
+  async function pushedBranch(branch = "feature/auth") {
+    const repo = await connectedRepo();
+    await sendWebhook("push", pushPayload(repo.githubId, { branch, created: true, after: sha(2), commits: [commit(2, ["a.ts"])] }));
+    return repo;
+  }
+
+  it("reports pushed branches to the refresh hook after commit", async () => {
+    onBranchesPushed.mockClear();
+    const { repositoryId } = await pushedBranch();
+    expect(onBranchesPushed).toHaveBeenCalledWith(expect.arrayContaining([{ repositoryId, branch: "feature/auth" }]));
+  });
+
+  it("stores the three-dot diff against the default branch, including both sides of a rename", async () => {
+    const { repositoryId, githubId } = await pushedBranch();
+    const { calls, fetchImpl } = compareFetch([
+      { filename: "src/b.ts" },
+      { filename: "src/new-name.ts", previous_filename: "src/old-name.ts" },
+    ]);
+    expect(await refreshChangedFiles(db.pool, { repositoryId, branch: "feature/auth" }, fetchImpl)).toBe("updated");
+    expect(calls).toEqual([`https://api.github.com/repos/buildfest/repo-${githubId}/compare/main...${sha(2)}`]);
+    expect((await branchState(repositoryId)).changed_files).toEqual(["src/b.ts", "src/new-name.ts", "src/old-name.ts"]);
+  });
+
+  it("drops a result whose head moved while GitHub was answering", async () => {
+    const { repositoryId } = await pushedBranch();
+    const { fetchImpl } = compareFetch([{ filename: "stale.ts" }], async () => {
+      await db.pool.query("update branch_states set head_sha = $2 where repository_id = $1", [repositoryId, sha(7)]);
+    });
+    expect(await refreshChangedFiles(db.pool, { repositoryId, branch: "feature/auth" }, fetchImpl)).toBe("stale");
+    expect((await branchState(repositoryId)).changed_files).toEqual([]);
+  });
+
+  it("skips the default branch, merged branches and branches GitHub no longer has", async () => {
+    const { repositoryId, githubId } = await pushedBranch("main");
+    const { calls, fetchImpl } = compareFetch([]);
+    expect(await refreshChangedFiles(db.pool, { repositoryId, branch: "main" }, fetchImpl)).toBe("skipped");
+
+    await sendWebhook("push", pushPayload(githubId, { branch: "done", created: true, after: sha(4), commits: [commit(4, ["d.ts"])] }));
+    await sendWebhook("pull_request", prPayload(githubId, "closed", { merged: true, branch: "done", number: 9 }));
+    expect(await refreshChangedFiles(db.pool, { repositoryId, branch: "done" }, fetchImpl)).toBe("skipped");
+    expect(calls).toEqual([]);
+
+    await sendWebhook("push", pushPayload(githubId, { branch: "gone", created: true, after: sha(5), commits: [commit(5, ["g.ts"])] }));
+    const gone = (async () => new Response("{}", { status: 404 })) as unknown as typeof fetch;
+    expect(await refreshChangedFiles(db.pool, { repositoryId, branch: "gone" }, gone)).toBe("skipped");
+  });
+
+  it("debounces a burst of pushes into one compare call", async () => {
+    const { repositoryId } = await pushedBranch();
+    const { calls, fetchImpl } = compareFetch([{ filename: "x.ts" }]);
+    const schedule = createCompareScheduler(db.pool, 20, fetchImpl);
+    const ref = { repositoryId, branch: "feature/auth" };
+    schedule([ref]);
+    schedule([ref]);
+    schedule([ref]);
+    await vi.waitFor(async () => expect((await branchState(repositoryId)).changed_files).toEqual(["x.ts"]));
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("GET /projects/:projectId/branches", () => {
+  it("lists active branches first and filters by status", async () => {
+    const { projectId, githubId } = await connectedRepo();
+    await sendWebhook("push", pushPayload(githubId, { branch: "merged-one", created: true, after: sha(1), commits: [commit(1, ["a.ts"])] }));
+    await sendWebhook("pull_request", prPayload(githubId, "closed", { merged: true, branch: "merged-one", number: 3 }));
+    await sendWebhook("push", pushPayload(githubId, { branch: "live-one", created: true, after: sha(2), commits: [commit(2, ["b.ts"])] }));
+
+    const all = (await call("GET", `/projects/${projectId}/branches`)).body;
+    expect(all.map((b: any) => [b.branch, b.status])).toEqual([["live-one", "active"], ["merged-one", "merged"]]);
+    expect(all[0]).toMatchObject({ head_sha: sha(2), changed_files: [], open_pr_number: null });
+
+    const merged = (await call("GET", `/projects/${projectId}/branches?status=merged`)).body;
+    expect(merged.map((b: any) => b.branch)).toEqual(["merged-one"]);
+    expect((await call("GET", `/projects/${projectId}/branches?status=bogus`)).status).toBe(400);
+    expect((await call("GET", "/projects/proj_nope/branches")).status).toBe(404);
   });
 });

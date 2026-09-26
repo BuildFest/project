@@ -46,6 +46,7 @@ import {
   IconStop,
 } from "./Icons";
 import EvidenceDrawer from "./EvidenceDrawer";
+import RepositoryPanel from "./repo/RepositoryPanel";
 import StatusBadge from "./StatusBadge";
 
 const POLL_MS = 10_000; // contract §1: dashboard polls /state about every 10 s
@@ -297,6 +298,8 @@ function Sidebar({
           <li className="flex items-center gap-2"><IconBranches /> Task keys <span className="font-mono text-text">{project.task_key_prefix}-1</span>, <span className="font-mono text-text">{project.task_key_prefix}-2</span>…</li>
         </ul>
       </section>
+
+      <RepositoryPanel workspace={workspace} />
 
       <section className="border-t border-line pt-5">
         <h3 className="mb-2 text-sm font-semibold text-header">Progress</h3>

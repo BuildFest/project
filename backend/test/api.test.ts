@@ -1,36 +1,17 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import EmbeddedPostgres from "embedded-postgres";
-import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/api/app.js";
+import { startTestDb } from "./db.js";
 
-const SCHEMA = readFileSync(new URL("../../db/schema.sql", import.meta.url), "utf8");
-
-let postgres: EmbeddedPostgres;
-let pool: pg.Pool;
-let dataDir: string;
+let db: Awaited<ReturnType<typeof startTestDb>>;
 let app: ReturnType<typeof createApp>;
 
 beforeAll(async () => {
-  dataDir = mkdtempSync(join(tmpdir(), "pitcrew-pg-"));
-  const port = 50000 + Math.floor(Math.random() * 10000);
-  postgres = new EmbeddedPostgres({
-    databaseDir: dataDir, port, user: "postgres", password: "test", persistent: false, onLog: () => {},
-  });
-  await postgres.initialise();
-  await postgres.start();
-  await postgres.createDatabase("pitcrew_test");
-  pool = new pg.Pool({ connectionString: `postgres://postgres:test@localhost:${port}/pitcrew_test` });
-  await pool.query(SCHEMA);
-  app = createApp(pool);
+  db = await startTestDb();
+  app = createApp(db.pool);
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await postgres?.stop();
-  rmSync(dataDir, { recursive: true, force: true });
+  await db?.stop();
 });
 
 async function call(method: string, path: string, body?: unknown) {

@@ -9,7 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "analyze": "tsx src/analysis/cli.ts"
+    "analyze": "tsx src/analysis/cli.ts",
+    "migrate": "node dist/migrate.js",
+    "migrate:dev": "tsx src/migrate.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

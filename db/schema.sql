@@ -22,7 +22,9 @@
 --     are not FK-checked; readers must tolerate dangling IDs.
 --   * "ON DELETE SET NULL (col)" requires PostgreSQL 15.
 
-begin;
+-- Applied as migration 0000_schema by backend/src/migrations.ts, which wraps
+-- it in a transaction. Once a database exists anywhere, don't edit this file:
+-- add db/migrations/<YYYYMMDDHHMMSS>_<name>.sql instead.
 
 -- ============================================================================
 -- Shared helpers
@@ -556,5 +558,3 @@ create table timeline_items (
 );
 
 create index timeline_items_project_time_idx on timeline_items (project_id, occurred_at desc);
-
-commit;

@@ -10,7 +10,7 @@ file in the same PR.
 
 | Status | Meaning |
 |---|---|
-| ✅ | Implemented and tested on `feat/project-api` |
+| ✅ | Implemented and tested |
 | 📝 | Agreed shape, not built yet. Build against it and flag changes in the PR |
 
 Owners follow tech doc §4: **A** = event infrastructure and plan CRUD,
@@ -28,7 +28,7 @@ Deployed: Railway service URL, same paths.
 `types.ts` interfaces directly, with no mapping layer.
 
 **IDs.** Server-generated prefixed ULIDs (`proj_…`, `mem_…`, `ms_…`,
-`task_…`). Clients never create IDs.
+`task_…`, `repo_…`, `event_…`). Clients never create IDs.
 
 **Timestamps.** Responses: ISO 8601 strings in UTC
 (`"2026-10-04T17:00:00.000Z"`). Requests: anything Postgres `timestamptz`
@@ -220,38 +220,52 @@ the initial plan is set up.
 
 ## 4. Repository and events — owner A
 
-### 4.1 📝 `POST /projects/:projectId/repositories`
-Connects a GitHub repo. The server stores the webhook secret (env var / secret
-store, not committed) and returns the webhook URL to configure on GitHub.
+### 4.1 ✅ `POST /projects/:projectId/repositories`
+Connects a GitHub repo. The server looks it up on GitHub (id, default branch),
+stores it as `connection_status: "pending"`, and returns what to paste into
+the repo's **Settings → Webhooks** page (content type `application/json`,
+events: pushes and pull requests).
 
 ```ts
-{ full_name: string /* "BuildFest/project" */; make_primary?: boolean /* default true */ }
+{ full_name: string /* "BuildFest/project" or a github.com URL */; make_primary?: boolean /* default true */ }
 ```
-→ `201 { repository: Repository; webhook_url: string }`
+→ `201 { repository: Repository; webhook_url: string; webhook_secret: string }`
 
-The secret is never returned after creation. It's shown once in the
-response as `webhook_secret` so it can be pasted into GitHub.
+`webhook_secret` is only ever in this response; `GET` never returns it.
+`connection_status` becomes `"connected"` on the first verified delivery
+(GitHub sends a `ping` as soon as the webhook is saved).
 
-### 4.2 📝 `GET /projects/:projectId/repositories`
-→ `200 Repository[]`
+| Status | When |
+|---|---|
+| `400` | GitHub doesn't know the repo, or `GITHUB_TOKEN` can't see it |
+| `404` | Project doesn't exist |
+| `409` | Repo already connected to this project |
+| `502` | GitHub unreachable or erroring |
+
+### 4.2 ✅ `GET /projects/:projectId/repositories`
+→ `200 Repository[]`, oldest first.
 
 ### 4.3 📝 `POST /projects/:projectId/repositories/:repositoryId/backfill`
 Imports existing branches, PRs and recent commits. Asynchronous.
 → `202 { started_at: string }`. Progress shows up as `repository.last_backfill_at`.
 
-### 4.4 📝 `POST /webhooks/github`
+### 4.4 ✅ `POST /webhooks/github`
 Called by GitHub, not by the frontend. It takes the raw payload plus the
 `X-GitHub-Event`, `X-GitHub-Delivery` and `X-Hub-Signature-256` headers.
 
 | Response | When |
 |---|---|
-| `202` | Accepted and queued for normalization |
+| `202` | Stored. Body `{ status: "normalized" \| "ignored", events: number }` (new `github_events` rows) |
 | `200` | Duplicate delivery ID, already processed (no-op) |
+| `400` | Missing headers or non-JSON payload |
 | `401` | Signature doesn't verify |
 | `404` | Unknown repository |
 
-It always responds quickly. Analysis happens after the response, never inline
-(tech doc §3).
+`push` and `pull_request` (opened, reopened, synchronize, closed) become
+`github_events` and update `branch_states`; other events are stored as
+`ignored`. Normalization runs inline in one transaction (cheap, no GitHub API
+calls). Analysis still happens after the response, never inline (tech doc §3).
+A delivery that fails is stored as `failed` and GitHub's **Redeliver** retries it.
 
 ### 4.5 📝 `GET /projects/:projectId/events`
 Normalized activity, newest first, cursor-paginated.

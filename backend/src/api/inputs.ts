@@ -72,6 +72,16 @@ export const UpdateTaskInput = CreateTaskInput.extend({
   archived: z.boolean(),
 }).partial();
 
+// Accepts "owner/name" or a pasted https://github.com/owner/name URL.
+export const ConnectRepositoryInput = z.object({
+  full_name: z
+    .string()
+    .trim()
+    .transform((s) => s.replace(/^https?:\/\/github\.com\//i, "").replace(/(\.git)?\/?$/, ""))
+    .pipe(z.string().regex(/^[\w.-]+\/[\w.-]+$/, "expected owner/name")),
+  make_primary: z.boolean().default(true),
+});
+
 export const CreateDependencyInput = z.object({
   task_id: z.string().min(1),
   depends_on_task_id: z.string().min(1),

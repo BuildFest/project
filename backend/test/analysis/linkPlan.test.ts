@@ -77,6 +77,34 @@ describe("planLinks", () => {
     expect(plan.needsAi).toEqual([]);
   });
 
+  it("lets a manual correction override older ai links on the branch", () => {
+    const plan = planLinks(
+      [
+        event({ event_id: "c1", event_type: "commit", branch: "jwt" }),
+        event({ event_id: "c2", event_type: "commit", branch: "jwt" }),
+        event({ event_id: "c3", event_type: "commit", branch: "jwt" }),
+        event({ event_id: "c4", event_type: "commit", branch: "jwt" }),
+      ],
+      [auth, dash],
+      "PC",
+      [
+        link({ event_id: "c1", task_id: "task_auth" }),
+        link({ event_id: "c2", task_id: "task_auth" }),
+        link({
+          event_id: "c3",
+          task_id: "task_dash",
+          method: "manual",
+          status: "confirmed",
+          confidence: 1,
+        }),
+      ],
+      main,
+    );
+    expect(plan.links).toMatchObject([
+      { event_id: "c4", task_id: "task_dash", status: "suggested", confidence: 1 },
+    ]);
+  });
+
   it("sends only unlinked, unrelated work to the model", () => {
     const plan = planLinks(
       [

@@ -60,8 +60,33 @@ class LinkBook {
       byTask.set(l.task_id, [...(byTask.get(l.task_id) ?? []), l]);
     }
     let best: { task_id: string; sources: EventTaskLink[] } | null = null;
+    const authority = (link: EventTaskLink) => {
+      if (link.method === "manual" && link.status === "confirmed") return 4;
+      if (link.method === "task_key" && link.status === "confirmed") return 3;
+      if (countsTowardState(link)) return 2;
+      return 1;
+    };
+    const score = (sources: EventTaskLink[]) => ({
+      authority: Math.max(...sources.map(authority)),
+      count: sources.length,
+      confidence: Math.max(...sources.map((source) => source.confidence)),
+    });
     for (const [task_id, sources] of byTask) {
-      if (!best || sources.length > best.sources.length) best = { task_id, sources };
+      if (!best) {
+        best = { task_id, sources };
+        continue;
+      }
+      const candidate = score(sources);
+      const current = score(best.sources);
+      if (
+        candidate.authority > current.authority ||
+        (candidate.authority === current.authority && candidate.count > current.count) ||
+        (candidate.authority === current.authority &&
+          candidate.count === current.count &&
+          candidate.confidence > current.confidence)
+      ) {
+        best = { task_id, sources };
+      }
     }
     return best;
   }

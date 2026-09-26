@@ -42,7 +42,7 @@ async function updateRow(
   return rows[0] ?? null;
 }
 
-export function createApp(db: Db) {
+export function createApp(db: Db, onEventsIngested?: (projectIds: string[]) => void) {
   const app = new Hono();
 
   app.use("*", cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:3000" }));
@@ -192,7 +192,7 @@ export function createApp(db: Db) {
 
   // ---- repositories and webhooks (src/api/ingestion.ts) ---------------------
 
-  registerIngestionRoutes(app, db);
+  registerIngestionRoutes(app, db, onEventsIngested);
 
   return app;
 }

@@ -1,8 +1,17 @@
 // Server entry point: `npm run dev` locally, `node dist/server.js` on Railway.
+import { existsSync } from "node:fs";
+import { loadEnvFile } from "node:process";
 import { serve } from "@hono/node-server";
+import { loadAiConfig } from "./ai/config.js";
+import { createModelRouter } from "./ai/router.js";
+import { linkProjectEvents } from "./analysis/linkEvents.js";
 import { createApp } from "./api/app.js";
 import { requireEnv } from "./config.js";
 import { createPool } from "./db.js";
+
+// Railway supplies environment variables directly; local development uses
+// backend/.env when present. The file is gitignored.
+if (existsSync(".env")) loadEnvFile(".env");
 
 // Fail at boot, not on the first webhook: a server without the secret would
 // reject every delivery. Behind Railway's proxy the request origin is
@@ -11,6 +20,18 @@ requireEnv("GITHUB_WEBHOOK_SECRET");
 if (process.env.NODE_ENV === "production") requireEnv("PUBLIC_BASE_URL");
 
 const port = Number(process.env.PORT ?? 8787);
-serve({ fetch: createApp(createPool()).fetch, port }, (info) => {
+const db = createPool();
+const router = createModelRouter(loadAiConfig());
+const analyzeProjects = (projectIds: string[]) => {
+  for (const projectId of projectIds) {
+    setImmediate(() => {
+      void linkProjectEvents(db, router, projectId).catch((error) => {
+        console.error("task linking failed", { projectId, error });
+      });
+    });
+  }
+};
+
+serve({ fetch: createApp(db, analyzeProjects).fetch, port }, (info) => {
   console.log(`Pit Crew API listening on port ${info.port}`);
 });

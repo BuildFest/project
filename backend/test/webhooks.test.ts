@@ -9,6 +9,7 @@ const SECRET = "test-webhook-secret";
 
 let db: Awaited<ReturnType<typeof startTestDb>>;
 let app: ReturnType<typeof createApp>;
+const onEventsIngested = vi.fn();
 
 // Each connected repo gets its own GitHub id: the same id connected to two
 // projects fans deliveries out to both, which would couple tests.
@@ -26,7 +27,7 @@ beforeAll(async () => {
     return Response.json({ id, name, full_name: fullName, default_branch: "main", owner: { login: owner } });
   });
   db = await startTestDb();
-  app = createApp(db.pool);
+  app = createApp(db.pool, onEventsIngested);
 }, 120_000);
 
 afterAll(async () => {
@@ -218,19 +219,22 @@ describe("POST /webhooks/github", () => {
   });
 
   it("stores a push, updates the branch, and dedupes redeliveries", async () => {
-    const { githubId, repositoryId } = await connectedRepo();
+    onEventsIngested.mockClear();
+    const { githubId, projectId, repositoryId } = await connectedRepo();
     const payload = pushPayload(githubId, { created: true, after: sha(2), commits: [commit(1, ["a.ts"]), commit(2, ["b.ts"])] });
 
     const first = await sendWebhook("push", payload);
     expect(first).toMatchObject({ status: 202, body: { status: "normalized", events: 4 } });
     expect(await eventCount(repositoryId)).toBe(4);
     expect(await branchState(repositoryId)).toMatchObject({ status: "active", head_sha: sha(2), open_pr_number: null });
+    expect(onEventsIngested).toHaveBeenCalledWith([projectId]);
 
     // Same delivery ID (GitHub retry): no-op.
     expect(await sendWebhook("push", payload, { deliveryId: first.deliveryId })).toMatchObject({ status: 200, body: { status: "duplicate" } });
     // New delivery ID, same facts: stored delivery, zero new events.
     expect((await sendWebhook("push", payload)).body).toMatchObject({ status: "normalized", events: 0 });
     expect(await eventCount(repositoryId)).toBe(4);
+    expect(onEventsIngested).toHaveBeenCalledTimes(1);
   });
 
   it("tracks a PR from opened to merged on the head branch", async () => {

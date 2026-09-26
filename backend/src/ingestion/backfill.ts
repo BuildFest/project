@@ -98,6 +98,38 @@ export async function runBackfill(db: Db, repositoryId: string, fetchImpl: Fetch
   );
   const repo = rows[0];
   if (!repo) throw new Error(`repository ${repositoryId} not found`);
+
+  // Outcome goes on the repository row (GET /repositories shows it), not just the logs.
+  await db.query("update repositories set backfill_status = 'running', backfill_error = null where repository_id = $1", [
+    repositoryId,
+  ]);
+  try {
+    const stats = await backfillStages(db, repo, fetchImpl);
+    const partial = stats.failures.length > 0;
+    await db.query(
+      `update repositories set last_backfill_at = now(), backfill_status = $2, backfill_error = $3
+        where repository_id = $1`,
+      [repositoryId, partial ? "partial" : "succeeded", partial ? stats.failures.join("\n").slice(0, 4000) : null],
+    );
+    return stats;
+  } catch (err) {
+    await db
+      .query("update repositories set backfill_status = 'failed', backfill_error = $2 where repository_id = $1", [
+        repositoryId,
+        (err as Error).message.slice(0, 4000),
+      ])
+      .catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Stages are independent: one that fails (say, the token can't list pull
+ * requests) is recorded in stats.failures and the others still run. Only an
+ * unreadable repository aborts the run.
+ */
+async function backfillStages(db: Db, repo: RepoRow, fetchImpl: Fetch): Promise<BackfillStats> {
+  const repositoryId = repo.repository_id;
   const path = `/repos/${repo.full_name}`;
   const stats: BackfillStats = { prs_listed: 0, branches_listed: 0, events_inserted: 0, branches_deleted: 0, failures: [] };
   const record = async (events: NormalizedEvent[]) => {
@@ -113,7 +145,12 @@ export async function runBackfill(db: Db, repositoryId: string, fetchImpl: Fetch
   }
 
   // 1. Pull requests, oldest first so branch state folds in order.
-  const prs = await githubList<RestPull>(`${path}/pulls?state=all&sort=created&direction=asc`, fetchImpl, MAX_PAGES);
+  let prs: RestPull[] = [];
+  try {
+    prs = await githubList<RestPull>(`${path}/pulls?state=all&sort=created&direction=asc`, fetchImpl, MAX_PAGES);
+  } catch (err) {
+    stats.failures.push(`pull requests: ${(err as Error).message} (does GITHUB_TOKEN have "Pull requests: Read"?)`);
+  }
   stats.prs_listed = prs.length;
   for (const pr of prs) {
     try {
@@ -138,7 +175,13 @@ export async function runBackfill(db: Db, repositoryId: string, fetchImpl: Fetch
 
   // 2. Branches: create unknown ones, catch up heads that moved unseen, store changed files.
   const listedAt = new Date().toISOString();
-  const branches = await githubList<RestBranch>(`${path}/branches`, fetchImpl, MAX_PAGES);
+  let branches: RestBranch[];
+  try {
+    branches = await githubList<RestBranch>(`${path}/branches`, fetchImpl, MAX_PAGES);
+  } catch (err) {
+    stats.failures.push(`branches: ${(err as Error).message} (does GITHUB_TOKEN have "Contents: Read"?)`);
+    return stats; // without a listing, deletions can't be inferred either
+  }
   stats.branches_listed = branches.length;
   for (const b of branches) {
     try {
@@ -175,8 +218,6 @@ export async function runBackfill(db: Db, repositoryId: string, fetchImpl: Fetch
       stats.branches_deleted += r.inserted;
     }
   }
-
-  await db.query("update repositories set last_backfill_at = now() where repository_id = $1", [repositoryId]);
   return stats;
 }
 

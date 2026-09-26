@@ -250,9 +250,16 @@ Imports what happened before the webhook existed, or while deliveries were
 failing: every PR (opened, merged/closed), every branch (with its head, its
 branch-unique commits and its `changed_files`), and branches deleted since.
 Asynchronous.
-→ `202 { started_at: string }`. When it finishes, `repository.last_backfill_at`
-updates. A request while a run is in progress returns that run's
-`started_at`. `404` if the repository isn't in this project.
+→ `202 { started_at: string }`. Progress and outcome show on the repository
+(`GET /repositories`):
+
+| Field | Meaning |
+|---|---|
+| `backfill_status` | `null` (never run), `running`, `succeeded`, `partial` (some stages failed, the rest imported), `failed` (repo unreadable, nothing imported) |
+| `backfill_error` | Why it was `partial`/`failed`, e.g. the token lacks "Pull requests: Read". `null` otherwise |
+| `last_backfill_at` | Set when a run finishes (`succeeded` or `partial`) |
+
+A request while a run is in progress returns that run's `started_at`. `404` if the repository isn't in this project.
 
 Safe to run any number of times: backfilled facts use the same dedupe keys as
 webhooks (`github_events.source = "backfill"`), so a second run adds nothing.

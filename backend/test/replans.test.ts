@@ -109,6 +109,108 @@ describe("GET /projects/:projectId/replans", () => {
   });
 });
 
+describe("POST .../replans/:suggestionId/accept", () => {
+  it("applies every change, saves plan v2 and supersedes other proposals", async () => {
+    const s = await seedProject();
+    const other = await addSuggestion(s, []);
+    const id = await addSuggestion(s, [
+      { op: "update_task", task_id: s.auth, changes: { priority: "critical" } },
+      { op: "update_task", task_id: s.stats, changes: { plan_status: "cancelled" } },
+      { op: "create_task", task: { title: "Mock auth for dashboard", scope: "optional" } },
+      { op: "remove_dependency", task_id: s.dash, depends_on_task_id: s.auth },
+      { op: "add_dependency", task_id: s.stats, depends_on_task_id: s.dash },
+      { op: "update_milestone", milestone_id: s.milestone, changes: { target_at: "2026-09-28T12:00:00Z" } },
+    ]);
+
+    const res = await call("POST", `/projects/${s.project}/replans/${id}/accept`, { member_id: s.member });
+    expect(res.status).toBe(200);
+    expect(res.body.plan_version).toBe(2);
+    expect(res.body.suggestion).toMatchObject({ suggestion_id: id, status: "accepted", reviewed_by: s.member });
+
+    const tasks = await pool.query(
+      "select task_key, title, priority, plan_status, scope, created_in_plan_version, updated_in_plan_version from tasks where project_id = $1 order by task_key",
+      [s.project],
+    );
+    expect(tasks.rows).toEqual([
+      { task_key: "PC-1", title: "Authentication API", priority: "critical", plan_status: "not_started", scope: "must_have", created_in_plan_version: null, updated_in_plan_version: 2 },
+      { task_key: "PC-2", title: "Dashboard", priority: "medium", plan_status: "not_started", scope: "must_have", created_in_plan_version: null, updated_in_plan_version: null },
+      { task_key: "PC-3", title: "Analytics", priority: "low", plan_status: "cancelled", scope: "optional", created_in_plan_version: null, updated_in_plan_version: 2 },
+      { task_key: "PC-4", title: "Mock auth for dashboard", priority: "medium", plan_status: "not_started", scope: "optional", created_in_plan_version: 2, updated_in_plan_version: null },
+    ]);
+    const deps = await pool.query("select task_id, depends_on_task_id from task_dependencies where project_id = $1", [s.project]);
+    expect(deps.rows).toEqual([{ task_id: s.stats, depends_on_task_id: s.dash }]);
+    const ms = await pool.query("select target_at from milestones where milestone_id = $1", [s.milestone]);
+    expect(ms.rows[0].target_at.toISOString()).toBe("2026-09-28T12:00:00.000Z");
+
+    const project = await pool.query("select current_plan_version from projects where project_id = $1", [s.project]);
+    expect(project.rows[0].current_plan_version).toBe(2);
+    const version = await pool.query(
+      "select source, suggestion_id, created_by, snapshot from plan_versions where project_id = $1 and version = 2",
+      [s.project],
+    );
+    expect(version.rows[0]).toMatchObject({ source: "replan_accepted", suggestion_id: id, created_by: s.member });
+    expect(version.rows[0].snapshot.tasks).toHaveLength(4);
+    expect(version.rows[0].snapshot.dependencies).toHaveLength(1);
+
+    const otherRow = await pool.query("select status from replan_suggestions where suggestion_id = $1", [other]);
+    expect(otherRow.rows[0].status).toBe("superseded");
+    expect((await timeline(s)).map((t) => [t.kind, t.title])).toEqual([
+      ["plan_change", "Plan v2 saved from an accepted replan"],
+      ["replan_reviewed", "Replan accepted"],
+    ]);
+  });
+
+  it("refuses a suggestion made against an older plan version", async () => {
+    const s = await seedProject();
+    await pool.query(
+      `insert into plan_versions (project_id, version, source, snapshot) values ($1, 2, 'manual', '{}')`,
+      [s.project],
+    );
+    await pool.query(`update projects set current_plan_version = 2 where project_id = $1`, [s.project]);
+    const id = await addSuggestion(s, [{ op: "update_task", task_id: s.auth, changes: { priority: "critical" } }]);
+
+    const res = await call("POST", `/projects/${s.project}/replans/${id}/accept`, { member_id: s.member });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("v1 -> v2");
+    const task = await pool.query("select priority from tasks where task_id = $1", [s.auth]);
+    expect(task.rows[0].priority).toBe("high");
+  });
+
+  it("rolls back every change when one of them fails", async () => {
+    const s = await seedProject();
+    const id = await addSuggestion(s, [
+      { op: "update_task", task_id: s.auth, changes: { priority: "critical" } },
+      // auth -> dash closes a cycle, because dash already requires auth.
+      { op: "add_dependency", task_id: s.auth, depends_on_task_id: s.dash },
+    ]);
+
+    const res = await call("POST", `/projects/${s.project}/replans/${id}/accept`, { member_id: s.member });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("cycle");
+
+    const task = await pool.query("select priority from tasks where task_id = $1", [s.auth]);
+    expect(task.rows[0].priority).toBe("high");
+    const suggestion = await pool.query("select status from replan_suggestions where suggestion_id = $1", [id]);
+    expect(suggestion.rows[0].status).toBe("proposed");
+    const versions = await pool.query("select count(*)::int as n from plan_versions where project_id = $1", [s.project]);
+    expect(versions.rows[0].n).toBe(1);
+  });
+
+  it("returns 409 for changes that no longer fit the plan", async () => {
+    const s = await seedProject();
+    const missingDep = await addSuggestion(s, [
+      { op: "remove_dependency", task_id: s.stats, depends_on_task_id: s.auth },
+    ]);
+    const res = await call("POST", `/projects/${s.project}/replans/${missingDep}/accept`, { member_id: s.member });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("no longer exists");
+
+    const malformed = await addSuggestion(s, [{ op: "delete_everything" }]);
+    const bad = await call("POST", `/projects/${s.project}/replans/${malformed}/accept`, { member_id: s.member });
+    expect(bad.status).toBe(409);
+  });
+});
+
 async function timeline(s: Seed) {
   const { rows } = await pool.query(
     "select kind, title, actor, entity_id from timeline_items where project_id = $1 order by kind",

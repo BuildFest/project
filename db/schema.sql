@@ -190,8 +190,35 @@ create index task_dependencies_depends_on_idx on task_dependencies (depends_on_t
 create function task_dependencies_no_cycle() returns trigger
 language plpgsql as $$
 begin
-  -- TODO: raise an exception if NEW.task_id is reachable by following
-  -- depends_on_task_id edges starting from NEW.depends_on_task_id.
+  -- Self-dependency is the CHECK constraint's job (400), not a cycle (409).
+  -- BEFORE triggers run ahead of CHECKs, so step aside explicitly.
+  if new.task_id = new.depends_on_task_id then
+    return new;
+  end if;
+
+  -- Serialize dependency writes per project, otherwise two concurrent
+  -- inserts (A->B, B->A) each see an acyclic graph and both commit.
+  perform pg_advisory_xact_lock(hashtext('task_dependencies:' || new.project_id));
+
+  -- Cycle iff NEW.task_id is reachable from NEW.depends_on_task_id. On UPDATE
+  -- the row being replaced is still visible, so exclude it from the walk.
+  if exists (
+    with recursive reachable(task_id) as (
+      select new.depends_on_task_id
+      union
+      select d.depends_on_task_id
+        from task_dependencies d
+        join reachable r on d.task_id = r.task_id
+       where (d.task_id, d.depends_on_task_id)
+             is distinct from (old.task_id, old.depends_on_task_id)
+    )
+    select 1 from reachable where task_id = new.task_id
+  ) then
+    raise exception 'dependency would create a cycle'
+      using errcode = 'check_violation',
+            constraint = 'task_dependencies_no_cycle';
+  end if;
+
   return new;
 end $$;
 

@@ -189,6 +189,23 @@ describe("database rule errors", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 409 cycle for an indirect dependency loop", async () => {
+    const ws = await createProject();
+    const pid = ws.project.project_id;
+    const [a, b, c] = await Promise.all(
+      ["A", "B", "C"].map(async (title) => (await call("POST", `/projects/${pid}/tasks`, { title })).body),
+    );
+    expect((await call("POST", `/projects/${pid}/dependencies`, { task_id: a.task_id, depends_on_task_id: b.task_id })).status).toBe(201);
+    expect((await call("POST", `/projects/${pid}/dependencies`, { task_id: b.task_id, depends_on_task_id: c.task_id })).status).toBe(201);
+
+    const res = await call("POST", `/projects/${pid}/dependencies`, { task_id: c.task_id, depends_on_task_id: a.task_id });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "dependency would create a cycle", code: "cycle" });
+
+    // A diamond (A->B, A->C, B->C) shares a node but isn't a cycle.
+    expect((await call("POST", `/projects/${pid}/dependencies`, { task_id: a.task_id, depends_on_task_id: c.task_id })).status).toBe(201);
+  });
+
   it("returns 400 for an unparseable timestamp", async () => {
     const res = await call("POST", "/projects", { name: "x", task_key_prefix: "PC", deadline_at: "next friday" });
     expect(res.status).toBe(400);

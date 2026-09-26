@@ -69,17 +69,16 @@ interface ApiError {
 |---|---|
 | `400` | Body isn't JSON, fails validation, references something that doesn't exist or belongs to another project, breaks a CHECK rule (e.g. a task depending on itself), or has an unparseable timestamp |
 | `404` | The resource in the URL doesn't exist |
-| `409` | Conflicts with existing state: duplicate dependency, duplicate task key |
+| `409` | Conflicts with existing state: duplicate dependency, duplicate task key, dependency cycle (`code: "cycle"`) |
 | `500` | Bug. Body is `{ "error": "internal error" }`; details are only in server logs |
 
 Error bodies never contain table names, constraint names, or SQL.
 
 Database-rule violations are mapped in `backend/src/api/errors.ts`
 (`pgErrorToHttp()`); `code` carries the Postgres SQLSTATE (`23505` duplicate,
-`23503` bad reference, `23514` rule violation, `22007` bad timestamp).
-
-> **Open:** the dependency-cycle check isn't enforced yet. When it lands it
-> will return `409` with `code: "cycle"`.
+`23503` bad reference, `23514` rule violation, `22007` bad timestamp), except
+a dependency that would close a loop (A → B → … → A), which returns `409` with
+`code: "cycle"`.
 
 ---
 

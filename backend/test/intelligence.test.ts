@@ -1,0 +1,150 @@
+import type pg from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createApp } from "../src/api/app.js";
+import { startTestDb } from "./db.js";
+
+let db: Awaited<ReturnType<typeof startTestDb>>;
+let pool: pg.Pool;
+let app: ReturnType<typeof createApp>;
+
+beforeAll(async () => {
+  db = await startTestDb();
+  pool = db.pool;
+  app = createApp(pool);
+}, 120_000);
+
+afterAll(async () => {
+  await db?.stop();
+});
+
+async function get(path: string) {
+  const res = await app.request(path);
+  return { status: res.status, body: await res.json() };
+}
+
+let n = 0;
+async function seedProject() {
+  const id = ++n;
+  const p = `proj_${id}`;
+  await pool.query(
+    `insert into projects (project_id, name, task_key_prefix, created_by) values ($1, 'Pit Crew', 'PC', 'test')`,
+    [p],
+  );
+  await pool.query(
+    `insert into repositories (repository_id, project_id, owner, name, full_name)
+     values ($1, $2, 'BuildFest', 'project', 'BuildFest/project')`,
+    [`repo_${id}`, p],
+  );
+  await pool.query(
+    `insert into tasks (task_id, task_key, project_id, title, sort_order, archived) values
+       ($2, 'PC-1', $1, 'Authentication API', 1, false),
+       ($3, 'PC-2', $1, 'Dashboard', 2, false),
+       ($4, 'PC-3', $1, 'Old idea', 3, true)`,
+    [p, `task_auth_${id}`, `task_dash_${id}`, `task_old_${id}`],
+  );
+  return {
+    project: p,
+    repo: `repo_${id}`,
+    auth: `task_auth_${id}`,
+    dash: `task_dash_${id}`,
+    old: `task_old_${id}`,
+  };
+}
+
+type Seed = Awaited<ReturnType<typeof seedProject>>;
+
+async function addEvent(s: Seed, eventId: string, occurredAt: string) {
+  await pool.query(
+    `insert into github_events
+       (event_id, project_id, repository_id, source, external_event_id, event_type, occurred_at, branch, commit)
+     values ($1, $2, $3, 'backfill', $1, 'commit', $4, 'jwt', '{"sha":"a","message":"jwt refresh"}')`,
+    [eventId, s.project, s.repo, occurredAt],
+  );
+}
+
+async function addState(s: Seed, taskId: string, status: string, computedAt: string, blocking: string[] = []) {
+  await pool.query(
+    `insert into derived_task_states (task_id, project_id, computed_status, computed_at, blocking_task_ids)
+     values ($1, $2, $3, $4, $5)`,
+    [taskId, s.project, status, computedAt, blocking],
+  );
+}
+
+async function addSignal(s: Seed, id: string, status: "active" | "resolved", taskIds: string[]) {
+  await pool.query(
+    `insert into health_signals
+       (signal_id, project_id, type, status, severity, title, explanation, related_task_ids, resolved_at, fingerprint)
+     values ($1, $2, 'task_possibly_blocked', $3, 'warning', 'Blocked', 'Waiting on PC-1', $4,
+             case when $3 = 'active' then null else now() end, $1)`,
+    [id, s.project, status, taskIds],
+  );
+}
+
+describe("GET /projects/:projectId/state", () => {
+  it("returns 404 for an unknown project", async () => {
+    expect((await get("/projects/proj_missing/state")).status).toBe(404);
+  });
+
+  it("returns empty state for a project that was never analyzed", async () => {
+    const s = await seedProject();
+    const res = await get(`/projects/${s.project}/state`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      computed_at: null,
+      tasks: [],
+      signals: [],
+      collisions: [],
+      pending_links: [],
+      open_replans: 0,
+    });
+  });
+
+  it("returns only current, active, non-archived state", async () => {
+    const s = await seedProject();
+    await addState(s, s.dash, "possibly_blocked", "2026-09-26T12:00:00Z", [s.auth]);
+    await addState(s, s.auth, "in_progress", "2026-09-26T13:00:00Z");
+    await addState(s, s.old, "not_started", "2026-09-26T14:00:00Z");
+    await addSignal(s, `sig_a${n}`, "active", [s.dash]);
+    await addSignal(s, `sig_r${n}`, "resolved", [s.dash]);
+    await pool.query(
+      `insert into collisions (collision_id, project_id, repository_id, branch_a, branch_b, overlapping_files, status, resolved_at)
+       values ($1, $3, $4, 'a', 'b', '{src/x.ts}', 'active', null),
+              ($2, $3, $4, 'c', 'd', '{src/y.ts}', 'resolved', now())`,
+      [`col_a${n}`, `col_r${n}`, s.project, s.repo],
+    );
+    await addEvent(s, `evt_old${n}`, "2026-09-26T10:00:00Z");
+    await addEvent(s, `evt_new${n}`, "2026-09-26T11:00:00Z");
+    await pool.query(
+      `insert into event_task_links (link_id, project_id, event_id, task_id, method, confidence, status) values
+         ($1, $4, $5, $7, 'llm', 0.6, 'suggested'),
+         ($2, $4, $6, $7, 'llm', 0.9, 'suggested'),
+         ($3, $4, $6, $8, 'task_key', 1, 'confirmed')`,
+      [`link_1${n}`, `link_2${n}`, `link_3${n}`, s.project, `evt_old${n}`, `evt_new${n}`, s.auth, s.dash],
+    );
+    await pool.query(
+      `insert into plan_versions (project_id, version, source, snapshot) values ($1, 1, 'initial', '{}')`,
+      [s.project],
+    );
+    await pool.query(
+      `insert into replan_suggestions (suggestion_id, project_id, based_on_plan_version, status, rationale, generated_by)
+       values ($1, $3, 1, 'proposed', 'x', 'rules'), ($2, $3, 1, 'superseded', 'y', 'rules')`,
+      [`rp_1${n}`, `rp_2${n}`, s.project],
+    );
+
+    const { body } = await get(`/projects/${s.project}/state`);
+
+    expect(body.computed_at).toBe("2026-09-26T14:00:00.000Z");
+    expect(body.tasks.map((t: any) => [t.task_id, t.effective_status, t.blocking_task_ids])).toEqual([
+      [s.auth, "in_progress", []],
+      [s.dash, "possibly_blocked", [s.auth]],
+    ]);
+    expect(body.signals.map((x: any) => x.signal_id)).toEqual([`sig_a${n}`]);
+    expect(body.collisions.map((x: any) => x.collision_id)).toEqual([`col_a${n}`]);
+    expect(body.pending_links.map((l: any) => [l.link_id, l.event.event_id])).toEqual([
+      [`link_2${n}`, `evt_new${n}`],
+      [`link_1${n}`, `evt_old${n}`],
+    ]);
+    expect(body.pending_links[0].event.occurred_at).toBe("2026-09-26T11:00:00.000Z");
+    expect(body.open_replans).toBe(1);
+  });
+});

@@ -8,6 +8,7 @@ import { pgErrorToHttp } from "./errors.js";
 import { registerEventRoutes } from "./events.js";
 import { notFound, parseBody } from "./http.js";
 import { registerIngestionRoutes } from "./ingestion.js";
+import { registerIntelligenceRoutes } from "./intelligence.js";
 import {
   CreateDependencyInput,
   CreateMilestoneInput,
@@ -43,7 +44,7 @@ async function updateRow(
   return rows[0] ?? null;
 }
 
-export function createApp(db: Db) {
+export function createApp(db: Db, onEventsIngested?: (projectIds: string[]) => void) {
   const app = new Hono();
 
   app.use("*", cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:3000" }));
@@ -193,7 +194,11 @@ export function createApp(db: Db) {
 
   // ---- repositories and webhooks (src/api/ingestion.ts) ---------------------
 
-  registerIngestionRoutes(app, db);
+  registerIngestionRoutes(app, db, onEventsIngested);
+
+  // ---- project intelligence (src/api/intelligence.ts) -----------------------
+
+  registerIntelligenceRoutes(app, db);
 
   // ---- events (src/api/events.ts) ------------------------------------------
 

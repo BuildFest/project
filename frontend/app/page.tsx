@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { createProject, listProjects } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
@@ -45,23 +46,23 @@ export default function Home() {
   }
 
   const input =
-    "w-full rounded-md border border-zinc-300 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";
-  const label = "block text-sm text-zinc-500";
+    "w-full rounded-sm border border-line bg-surface p-2 text-sm";
+  const label = "block font-display text-xs font-semibold uppercase tracking-[0.12em] text-muted";
 
   return (
     <main className="mx-auto max-w-2xl space-y-8 p-8">
       <header>
-        <h1 className="text-3xl font-bold">Pit Crew</h1>
-        <p className="text-sm text-zinc-500">
+        <h1 className="font-display text-5xl font-bold uppercase tracking-wide leading-none border-l-4 border-signal pl-3">Pit Crew</h1>
+        <p className="text-sm text-muted">
           Your plan, connected to what&apos;s actually happening in the repo.
         </p>
       </header>
 
       <form
         onSubmit={handleCreate}
-        className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
+        className="space-y-3 rounded-sm border border-line bg-surface p-4"
       >
-        <h2 className="font-semibold">New project</h2>
+        <h2 className="font-display text-lg font-semibold uppercase tracking-wider">New project</h2>
 
         <div className="flex gap-3">
           <label className={`${label} flex-1`}>
@@ -96,30 +97,30 @@ export default function Home() {
             onChange={(e) => setBrief(e.target.value)} />
         </label>
 
-        <button className="rounded-md bg-zinc-900 px-4 py-2 text-sm text-white dark:bg-white dark:text-zinc-900">
+        <button className="rounded-sm bg-signal px-4 py-2 text-sm text-signal-ink">
           Create project
         </button>
       </form>
 
       <section>
-        <h2 className="mb-2 font-semibold">Projects</h2>
+        <h2 className="mb-2 font-display text-lg font-semibold uppercase tracking-wider">Projects</h2>
         {workspaces.length === 0 && (
-          <p className="text-sm text-zinc-500">No projects yet — create one above.</p>
+          <p className="text-sm text-muted">No projects yet — create one above.</p>
         )}
         {workspaces.map(({ project, members }) => (
-          <div key={project.project_id}
-            className="mb-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+          <Link key={project.project_id} href={`/projects/${project.project_id}`}
+            className="mb-2 block rounded-sm border border-line p-3 hover:border-signal">
             <div className="font-medium">
               {project.name}{" "}
-              <span className="ml-1 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800">
+              <span className="ml-1 rounded-sm border border-line px-1.5 py-0.5 font-mono text-xs text-muted">
                 {project.task_key_prefix}
               </span>
             </div>
-            <div className="text-sm text-zinc-500">
+            <div className="text-sm text-muted">
               {members.map((m) => m.display_name).join(", ") || "No team yet"}
               {project.deadline_at && ` · due ${new Date(project.deadline_at).toLocaleString()}`}
             </div>
-          </div>
+          </Link>
         ))}
       </section>
     </main>

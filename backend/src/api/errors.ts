@@ -32,6 +32,10 @@ const MAPPINGS: Record<string, { status: ContentfulStatusCode; error: string }> 
 
 export function pgErrorToHttp(err: unknown): HttpError | null {
   if (!(err instanceof pg.DatabaseError) || !err.code) return null;
+  // Raised by the task_dependencies_no_cycle trigger as a check_violation.
+  if (err.constraint === "task_dependencies_no_cycle") {
+    return { status: 409, body: { error: "dependency would create a cycle", code: "cycle" } };
+  }
   const mapped = MAPPINGS[err.code];
   if (!mapped) return null;
   return { status: mapped.status, body: { error: mapped.error, code: err.code } };

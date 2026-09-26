@@ -32,13 +32,35 @@ describe("createModelRouter", () => {
     expect((await router.run("pre_merge_review", request)).provider).toBe("anthropic");
   });
 
-  it("reports jobs as unavailable when their tier has no key", async () => {
+  it("falls back to fast when a smart-tier key is missing", async () => {
     const router = createModelRouter(loadAiConfig({ GROQ_API_KEY: "g" }), {
       clientFor: (t) => fakeClient(t),
     });
     expect(router.available("link_suggestion")).toBe(true);
+    expect(router.available("replan")).toBe(true);
+    await expect(router.run("replan", request)).resolves.toMatchObject({ provider: "groq" });
+  });
+
+  it("reports a smart job unavailable when neither tier has a key", async () => {
+    const router = createModelRouter(loadAiConfig({}), { clientFor: (t) => fakeClient(t) });
     expect(router.available("replan")).toBe(false);
     await expect(router.run("replan", request)).rejects.toBeInstanceOf(AiUnavailableError);
+  });
+
+  it("falls back to fast when the smart provider fails", async () => {
+    const runs: AiRunRecord[] = [];
+    const router = createModelRouter(loadAiConfig({ GROQ_API_KEY: "g", ANTHROPIC_API_KEY: "a" }), {
+      onRun: (run) => runs.push(run),
+      clientFor: (tier) =>
+        tier.provider === "anthropic"
+          ? { provider: tier.provider, model: tier.model, complete: vi.fn().mockRejectedValue(new Error("smart down")) }
+          : fakeClient(tier),
+    });
+    await expect(router.run("replan", request)).resolves.toMatchObject({ provider: "groq" });
+    expect(runs).toMatchObject([
+      { tier: "smart", provider: "anthropic", error: "smart down" },
+      { tier: "fast", provider: "groq", error: null },
+    ]);
   });
 
   it("reuses cached results for the same key", async () => {

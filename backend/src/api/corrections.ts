@@ -67,6 +67,8 @@ export function registerCorrectionRoutes(app: Hono, db: Db) {
     const { rows } = await db.query(
       `update event_task_links
           set status = $3,
+              reviewed_by = $4,
+              reviewed_at = now(),
               confirmed_by = case when $3 = 'confirmed' then $4 else null end,
               confirmed_at = case when $3 = 'confirmed' then now() else null end
         where project_id = $1 and link_id = $2 and status = 'suggested' returning *`,

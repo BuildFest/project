@@ -79,7 +79,21 @@ describe("corrections API", () => {
       [link, s.project, event2, s.task],
     );
     const reviewed = await call("PATCH", `/projects/${s.project}/links/${link}`, { status: "confirmed", member_id: s.member });
-    expect(reviewed.body).toMatchObject({ status: "confirmed", confirmed_by: s.member });
+    expect(reviewed.body).toMatchObject({ status: "confirmed", confirmed_by: s.member, reviewed_by: s.member });
+
+    const event3 = `${s.event}_3`;
+    await pool.query(
+      "insert into github_events (event_id,project_id,repository_id,source,external_event_id,event_type,occurred_at) values ($1,$2,$3,'backfill',$1,'commit',now())",
+      [event3, s.project, s.repo],
+    );
+    const rejectedLink = `link_reject_${n}`;
+    await pool.query(
+      "insert into event_task_links (link_id,project_id,event_id,task_id,method,confidence,status) values ($1,$2,$3,$4,'llm',.7,'suggested')",
+      [rejectedLink, s.project, event3, s.task],
+    );
+    const rejected = await call("PATCH", `/projects/${s.project}/links/${rejectedLink}`, { status: "rejected", member_id: s.member });
+    expect(rejected.body).toMatchObject({ status: "rejected", reviewed_by: s.member, confirmed_by: null });
+    expect(rejected.body.reviewed_at).toBeTruthy();
   });
 
   it("dismisses active signals and collisions with audit data", async () => {

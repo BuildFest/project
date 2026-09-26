@@ -367,6 +367,8 @@ create table event_task_links (
   created_by   text,  -- member_id, or 'system' for analyzers
   confirmed_by text,
   confirmed_at timestamptz,
+  reviewed_by  text,
+  reviewed_at  timestamptz,
   unique (event_id, task_id),
   foreign key (project_id, event_id)
     references github_events (project_id, event_id) on delete cascade,

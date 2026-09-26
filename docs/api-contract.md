@@ -355,6 +355,20 @@ caps the list at 300 files.
 
 These endpoints are proposed by A. B confirms or edits them in the PR.
 
+The Maintainer uses only read-only project tools and validates every cited
+task, event, signal, collision and replan ID. Model routing and daily budgets
+remain enforced by the shared router. Without configured model keys, digest
+and Q&A endpoints return deterministic grounded summaries.
+
+### 5.0 Maintainer and Ask Pit Crew
+
+- `POST /projects/:projectId/maintainer/digest` → `201 MaintainerNote`
+- `GET /projects/:projectId/maintainer/notes` → `200 MaintainerNote[]`
+- `POST /projects/:projectId/ask` `{ question: string }` → `201 MaintainerNote`
+
+Digests also run periodically for active projects. Answers and digests are
+notes only: they never mutate tasks, events, plan versions, or accept replans.
+
 ### 5.1 ✅ `GET /projects/:projectId/state`
 Everything the dashboard needs to paint the "plan vs reality" view in one
 call. The dashboard polls this. It only reads; it never triggers analysis.

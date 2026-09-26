@@ -22,6 +22,11 @@ async function get(path: string) {
   return { status: res.status, body: await res.json() };
 }
 
+async function post(path: string, body?: unknown) {
+  const res = await app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  return { status: res.status, body: await res.json() };
+}
+
 let n = 0;
 async function seedProject() {
   const id = ++n;
@@ -212,5 +217,34 @@ describe("GET /projects/:projectId/tasks/:taskId/evidence", () => {
     expect(res.body.links[0].event.occurred_at).toBe("2026-09-26T11:00:00.000Z");
     expect(res.body.signals.map((signal: any) => signal.signal_id)).toEqual([`sig_new${n}`, `sig_old${n}`]);
     expect(res.body.signals[0].detected_at).toBe("2026-09-26T13:00:00.000Z");
+  });
+});
+
+describe("Maintainer API", () => {
+  it("creates on-demand deterministic digests and lists notes without keys", async () => {
+    const s = await seedProject();
+    await addEvent(s, `evt_digest${n}`, "2026-09-26T12:00:00Z");
+    const created = await post(`/projects/${s.project}/maintainer/digest`);
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ project_id: s.project, kind: "digest", generated_by: "rules" });
+    expect(created.body.citations).toEqual([{ type: "event", id: `evt_digest${n}` }]);
+    const notes = await get(`/projects/${s.project}/maintainer/notes`);
+    expect(notes.body.map((note: any) => note.note_id)).toEqual([created.body.note_id]);
+  });
+
+  it("answers Ask Pit Crew with stored grounded fallback and validates input", async () => {
+    const s = await seedProject();
+    await addSignal(s, `sig_ask${n}`, "active", [s.auth]);
+    expect((await post(`/projects/${s.project}/ask`, { question: "?" })).status).toBe(400);
+    const answer = await post(`/projects/${s.project}/ask`, { question: "What needs attention?" });
+    expect(answer.status).toBe(201);
+    expect(answer.body).toMatchObject({ kind: "answer", question: "What needs attention?", generated_by: "rules" });
+    expect(answer.body.citations).toContainEqual({ type: "signal", id: `sig_ask${n}` });
+  });
+
+  it("returns 404 for missing projects", async () => {
+    expect((await post("/projects/proj_missing/maintainer/digest")).status).toBe(404);
+    expect((await post("/projects/proj_missing/ask", { question: "What changed?" })).status).toBe(404);
+    expect((await get("/projects/proj_missing/maintainer/notes")).status).toBe(404);
   });
 });

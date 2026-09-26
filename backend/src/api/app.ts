@@ -11,6 +11,7 @@ import { registerEventRoutes } from "./events.js";
 import { notFound, parseBody } from "./http.js";
 import { registerIngestionRoutes } from "./ingestion.js";
 import { registerIntelligenceRoutes } from "./intelligence.js";
+import { registerReplanRoutes } from "./replans.js";
 import {
   CreateDependencyInput,
   CreateMilestoneInput,
@@ -205,6 +206,7 @@ export function createApp(
   // ---- project intelligence (src/api/intelligence.ts) -----------------------
 
   registerIntelligenceRoutes(app, db);
+  registerReplanRoutes(app, db);
 
   // ---- events (src/api/events.ts) ------------------------------------------
 

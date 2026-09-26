@@ -383,17 +383,30 @@ database rejects a confirmation without a confirmer.
 A dismissed condition isn't re-raised while it persists. If it resolves
 and comes back later, it appears as a new signal.
 
-### 5.7 📝 Replan suggestions
-- `GET /projects/:projectId/replans?status=proposed` → `200 ReplanSuggestion[]`
+### 5.7 ✅ Replan suggestions
+- `GET /projects/:projectId/replans?status=proposed` → `200 ReplanSuggestion[]`, newest first.
+  `status` is optional (omit it for all). `400` unknown status · `404` project.
 - `POST /projects/:projectId/replans/:suggestionId/accept` `{ member_id }`
   → `200 { suggestion: ReplanSuggestion; plan_version: number }`
-  Applies `proposed_changes` to the plan, writes a `plan_versions` row with
-  `source: "replan_accepted"`, and marks the suggestion accepted, all in one
-  transaction. Returns `409` if the plan has moved past `based_on_plan_version`.
+  In one transaction: applies `proposed_changes` to the plan, writes a
+  `plan_versions` row (`source: "replan_accepted"`, a snapshot of milestones,
+  tasks and dependencies), sets `projects.current_plan_version`, marks the
+  suggestion accepted, marks every other `proposed` suggestion `superseded`,
+  and adds `replan_reviewed` and `plan_change` timeline items. If any change
+  fails, nothing is applied.
 - `POST /projects/:projectId/replans/:suggestionId/reject` `{ member_id }` → `200 ReplanSuggestion`
+  (adds a `replan_reviewed` timeline item).
 
-`proposed_changes` uses this closed set of operations. B generates them,
-A applies them, and FE renders them, so all three sides need the same list:
+| Status | When (accept and reject) |
+|---|---|
+| `400` | `member_id` missing or not a member of this project |
+| `404` | Suggestion doesn't exist in this project |
+| `409` | Suggestion isn't `proposed` any more · (accept) the plan moved past `based_on_plan_version` · a change no longer fits (task, milestone or dependency gone) · a change breaks a plan rule (`code: "cycle"`, duplicate dependency) |
+
+`proposed_changes` uses this closed set of operations. B generates and applies
+them, and FE renders them, so all sides need the same list. Field values follow
+the same rules as the plan endpoints (§3), validated by
+`backend/src/api/planChanges.ts`:
 
 ```ts
 type PlanChange =

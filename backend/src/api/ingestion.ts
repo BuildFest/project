@@ -134,7 +134,11 @@ async function ingestDelivery(tx: pg.PoolClient, d: Delivery): Promise<IngestRes
   return { duplicate: false, status, inserted };
 }
 
-export function registerIngestionRoutes(app: Hono, db: Db) {
+export function registerIngestionRoutes(
+  app: Hono,
+  db: Db,
+  onEventsIngested?: (projectIds: string[]) => void,
+) {
   app.post("/projects/:projectId/repositories", async (c) => {
     const input = await parseBody(c, ConnectRepositoryInput);
     const projectId = c.req.param("projectId");
@@ -224,6 +228,9 @@ export function registerIngestionRoutes(app: Hono, db: Db) {
     }
 
     if (result.duplicate) return c.json({ status: "duplicate" }, 200);
+    if (result.inserted > 0) {
+      onEventsIngested?.([...new Set(repos.map((repo) => repo.project_id))]);
+    }
     return c.json({ status: result.status, events: result.inserted }, 202);
   });
 }

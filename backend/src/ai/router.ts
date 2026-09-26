@@ -54,7 +54,7 @@ export function createModelRouter(config: AiConfig, deps: RouterDeps = {}): Mode
   const clientFor = deps.clientFor ?? ((tier: TierConfig) => defaultClient(tier, deps.fetch ?? fetch));
   const cacheSize = deps.cacheSize ?? 500;
   const clients = new Map<Tier, ModelClient>();
-  const cache = new Map<string, CompletionResult>();
+  const cache = new Map<string, { result: CompletionResult; tier: Tier }>();
   let budgetDay = "";
   let tokensToday = 0;
 
@@ -81,47 +81,65 @@ export function createModelRouter(config: AiConfig, deps: RouterDeps = {}): Mode
     return config.dailyTokenBudget > 0 && tokensToday >= config.dailyTokenBudget;
   }
 
+  function tiersFor(job: AiJob): Tier[] {
+    return config.jobs[job] === "smart" ? ["smart", "fast"] : ["fast"];
+  }
+
   return {
     available(job) {
-      return config.tiers[config.jobs[job]].apiKey !== null;
+      return tiersFor(job).some((tier) => config.tiers[tier].apiKey !== null);
     },
 
     async run(job, request, options = {}) {
-      const tier = config.jobs[job];
-      const { provider, model } = config.tiers[tier];
-      const cacheKey = options.cacheKey && `${job}:${provider}:${model}:${options.cacheKey}`;
-      const record = (fields: Partial<AiRunRecord>) =>
+      const primary = config.jobs[job];
+      const primaryConfig = config.tiers[primary];
+      const cacheKey = options.cacheKey && `${job}:${primaryConfig.provider}:${primaryConfig.model}:${options.cacheKey}`;
+      const record = (tier: Tier, fields: Partial<AiRunRecord>) => {
+        const { provider, model } = config.tiers[tier];
         deps.onRun?.({
           job, tier, provider, model,
           inputTokens: 0, outputTokens: 0, durationMs: 0, cached: false, error: null,
           ...fields,
         });
+      };
 
       if (cacheKey && cache.has(cacheKey)) {
-        record({ cached: true });
-        return cache.get(cacheKey)!;
+        const cached = cache.get(cacheKey)!;
+        record(cached.tier, { cached: true });
+        return cached.result;
       }
-      if (!this.available(job)) throw new AiUnavailableError(`no API key for ${provider} (${job})`);
+      if (!this.available(job)) {
+        throw new AiUnavailableError(`no API key for ${primaryConfig.provider} or fast fallback (${job})`);
+      }
       if (overBudget()) throw new AiUnavailableError("daily AI token budget exhausted");
 
-      const started = now().getTime();
-      try {
-        const result = await client(tier).complete(request);
-        spend(result.inputTokens + result.outputTokens);
-        record({
-          inputTokens: result.inputTokens,
-          outputTokens: result.outputTokens,
-          durationMs: now().getTime() - started,
-        });
-        if (cacheKey) {
-          if (cache.size >= cacheSize) cache.delete(cache.keys().next().value!);
-          cache.set(cacheKey, result);
+      let lastError: unknown;
+      for (const tier of tiersFor(job)) {
+        const tierConfig = config.tiers[tier];
+        if (!tierConfig.apiKey) {
+          record(tier, { error: `no API key for ${tierConfig.provider}` });
+          continue;
         }
-        return result;
-      } catch (err) {
-        record({ durationMs: now().getTime() - started, error: (err as Error).message });
-        throw err;
+        const started = now().getTime();
+        try {
+          const result = await client(tier).complete(request);
+          spend(result.inputTokens + result.outputTokens);
+          record(tier, {
+            inputTokens: result.inputTokens,
+            outputTokens: result.outputTokens,
+            durationMs: now().getTime() - started,
+          });
+          if (cacheKey) {
+            if (cache.size >= cacheSize) cache.delete(cache.keys().next().value!);
+            cache.set(cacheKey, { result, tier });
+          }
+          return result;
+        } catch (err) {
+          lastError = err;
+          record(tier, { durationMs: now().getTime() - started, error: (err as Error).message });
+        }
       }
+      throw lastError ?? new AiUnavailableError(`no model available for ${job}`);
     },
   };
 }

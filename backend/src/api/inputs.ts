@@ -39,6 +39,34 @@ export const UpdateProjectInput = z.object({
   status: z.enum(["active", "archived"]),
 }).partial();
 
+export const AccessLevel = z.enum(["owner", "editor", "viewer"]);
+
+// github_login is how GitHub activity is attributed to a member; "" clears it.
+const githubLogin = z
+  .string()
+  .trim()
+  .transform((s) => (s === "" ? null : s))
+  .nullable();
+
+export const CreateMemberInput = z.object({
+  display_name: z.string().trim().min(1),
+  github_login: githubLogin.default(null),
+  role_label: optionalText.optional(),
+  access_level: AccessLevel.default("editor"),
+});
+
+export const UpdateMemberInput = z.object({
+  display_name: z.string().trim().min(1),
+  github_login: githubLogin,
+  role_label: optionalText,
+  access_level: AccessLevel,
+}).partial();
+
+export const CreatePlanVersionInput = z.object({
+  summary: z.string().trim().min(1).nullable().default(null),
+  member_id: z.string().min(1).nullable().default(null),
+});
+
 export const UpdateBriefInput = z.object({
   content: z.string(),
   content_format: z.enum(["markdown", "plain"]).default("markdown"),
@@ -96,6 +124,19 @@ export const ListEventsQuery = z
 
 export const ListBranchesQuery = z.object({
   status: z.enum(["active", "merged", "deleted"]).optional(),
+});
+
+export const ListTimelineQuery = z.object({
+  limit: z.coerce.number().int().min(1).optional(),
+  cursor: z.string().min(1).optional(),
+  task_id: z.string().min(1).optional(),
+});
+
+export const CreateDecisionInput = z.object({
+  title: z.string().trim().min(1),
+  body: z.string().nullable().default(null),
+  member_id: z.string().min(1),
+  related_task_ids: z.array(z.string().min(1)).default([]),
 });
 
 export const CreateDependencyInput = z.object({

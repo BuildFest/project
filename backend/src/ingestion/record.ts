@@ -3,6 +3,7 @@ import { newId } from "../ids.js";
 import { applyToBranchState } from "./branches.js";
 import type { BranchRef } from "./compare.js";
 import type { NormalizedEvent } from "./normalize.js";
+import { projectEventsToTimeline } from "./timeline.js";
 
 export interface RecordResult {
   inserted: number;
@@ -29,20 +30,23 @@ export async function recordEvents(
   // ?after_seq readers never skip a late-committing row (see the seq migration).
   await tx.query("select pg_advisory_xact_lock(hashtext('events:' || $1))", [repo.project_id]);
 
+  const insertedIds: string[] = [];
   for (const event of events) {
+    const eventId = newId("event");
     const { rowCount } = await tx.query(
       `insert into github_events (event_id, project_id, repository_id, source, github_delivery_id, external_event_id,
                                   event_type, actor, occurred_at, branch, commit, pull_request, changed_files)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        on conflict (repository_id, event_type, external_event_id) do nothing`,
       [
-        newId("event"), repo.project_id, repo.repository_id, source, deliveryId, event.external_event_id,
+        eventId, repo.project_id, repo.repository_id, source, deliveryId, event.external_event_id,
         event.event_type, event.actor, event.occurred_at, event.branch, event.commit, event.pull_request,
         event.changed_files,
       ],
     );
     if (!rowCount) continue; // already known (redelivery, or seen by the other path)
     result.inserted++;
+    insertedIds.push(eventId);
     if (!result.latest || event.occurred_at > result.latest) result.latest = event.occurred_at;
     await applyToBranchState(tx, repo.project_id, repo.repository_id, event);
     // A new head means the branch's changed files need recomputing.
@@ -50,5 +54,7 @@ export async function recordEvents(
       result.pushedBranches.push({ repositoryId: repo.repository_id, branch: event.branch });
     }
   }
+  // Same transaction: an event and its timeline row appear together.
+  if (insertedIds.length > 0) await projectEventsToTimeline(tx, { eventIds: insertedIds });
   return result;
 }

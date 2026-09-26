@@ -1,19 +1,11 @@
 import type { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import type pg from "pg";
 import { requireEnv } from "../config.js";
 import { withTransaction, type Db } from "../db.js";
 import { githubHeaders } from "../github.js";
 import { newId } from "../ids.js";
 import type { BranchRef } from "../ingestion/compare.js";
-import {
-  normalizePullRequest,
-  normalizePush,
-  type NormalizedEvent,
-  type PullRequestPayload,
-  type PushPayload,
-} from "../ingestion/normalize.js";
-import { recordEvents } from "../ingestion/record.js";
+import { processDelivery, retryFailedDeliveries, type ProcessResult } from "../ingestion/deliveries.js";
 import { verifyGitHubSignature } from "../ingestion/verify.js";
 import { notFound, parseBody } from "./http.js";
 import { ConnectRepositoryInput } from "./inputs.js";
@@ -44,86 +36,19 @@ async function fetchGitHubRepo(fullName: string): Promise<GitHubRepo> {
   return (await res.json()) as GitHubRepo;
 }
 
-interface Delivery {
-  deliveryId: string;
-  githubEvent: string;
-  payload: any; // signed by GitHub, shape depends on githubEvent
-  payloadJson: string;
-  repos: { repository_id: string; project_id: string }[];
-  receivedAt: string;
-}
-
-type IngestResult =
-  | { duplicate: true }
-  | { duplicate: false; status: "normalized" | "ignored"; inserted: number; pushedBranches: BranchRef[] };
-
-function normalize(githubEvent: string, payload: any, receivedAt: string): NormalizedEvent[] {
-  if (githubEvent === "push") return normalizePush(payload as PushPayload, receivedAt);
-  if (githubEvent === "pull_request") {
-    const event = normalizePullRequest(payload as PullRequestPayload);
-    return event ? [event] : [];
-  }
-  return []; // ping, issues, etc.: stored, not normalized
-}
-
-async function ingestDelivery(tx: pg.PoolClient, d: Delivery): Promise<IngestResult> {
-  // Dedup point. A delivery that failed earlier may be retried (GitHub's
-  // "Redeliver" button); anything else already stored is a no-op.
-  const claimed = await tx.query(
-    `insert into webhook_deliveries (github_delivery_id, repository_id, github_event, action, payload, received_at)
-     values ($1, $2, $3, $4, $5::jsonb, $6)
-     on conflict (github_delivery_id) do update set status = 'received', error = null
-       where webhook_deliveries.status = 'failed'
-     returning 1`,
-    [
-      d.deliveryId,
-      d.repos.length === 1 ? d.repos[0].repository_id : null,
-      d.githubEvent,
-      typeof d.payload?.action === "string" ? d.payload.action : null,
-      d.payloadJson,
-      d.receivedAt,
-    ],
-  );
-  if (claimed.rowCount === 0) return { duplicate: true };
-
-  const events = normalize(d.githubEvent, d.payload, d.receivedAt);
-  let inserted = 0;
-  const pushedBranches: BranchRef[] = [];
-
-  // The same GitHub repo can be connected to more than one project; each gets
-  // its own copy of the events. Sorted so concurrent deliveries take the
-  // per-project event locks (inside recordEvents) in the same order.
-  const repos = [...d.repos].sort((a, b) => a.project_id.localeCompare(b.project_id));
-  for (const repo of repos) {
-    const recorded = await recordEvents(tx, repo, events, "webhook", d.deliveryId);
-    inserted += recorded.inserted;
-    pushedBranches.push(...recorded.pushedBranches);
-
-    // Any verified delivery proves the webhook is wired up.
-    await tx.query(
-      `update repositories
-          set connection_status = 'connected',
-              connected_at = coalesce(connected_at, now()),
-              last_event_at = greatest(last_event_at, $2::timestamptz)
-        where repository_id = $1`,
-      [repo.repository_id, recorded.latest],
-    );
-  }
-
-  const status = events.length > 0 ? "normalized" : "ignored";
-  await tx.query(
-    `update webhook_deliveries set status = $2, processed_at = now() where github_delivery_id = $1`,
-    [d.deliveryId, status],
-  );
-  return { duplicate: false, status, inserted, pushedBranches };
-}
-
 export function registerIngestionRoutes(
   app: Hono,
   db: Db,
   onEventsIngested?: (projectIds: string[]) => void,
   onBranchesPushed?: (refs: BranchRef[]) => void,
 ) {
+  // Follow-up work outside the ingest transaction: task linking, changed files.
+  function afterDelivery(result: ProcessResult) {
+    if (result.kind !== "processed") return;
+    if (result.inserted > 0) onEventsIngested?.([...new Set(result.repos.map((repo) => repo.project_id))]);
+    if (result.pushedBranches.length > 0) onBranchesPushed?.(result.pushedBranches);
+  }
+
   app.post("/projects/:projectId/repositories", async (c) => {
     const input = await parseBody(c, ConnectRepositoryInput);
     const projectId = c.req.param("projectId");
@@ -156,12 +81,43 @@ export function registerIngestionRoutes(
 
   app.get("/projects/:projectId/repositories", async (c) => {
     const projectId = c.req.param("projectId");
-    const { rows } = await db.query("select * from repositories where project_id = $1 order by created_at", [projectId]);
+    const { rows } = await db.query(
+      `select r.*,
+              (select max(d.received_at) from webhook_deliveries d
+                where d.repository_id = r.repository_id) as last_delivery_at,
+              (select count(*)::int from webhook_deliveries d
+                where d.repository_id = r.repository_id and d.status = 'failed') as failed_deliveries
+         from repositories r
+        where r.project_id = $1
+        order by r.created_at`,
+      [projectId],
+    );
     if (rows.length === 0) {
       const { rowCount } = await db.query("select 1 from projects where project_id = $1", [projectId]);
       if (!rowCount) notFound("project");
     }
+    // One word for the UI badge: is GitHub activity actually reaching us?
+    for (const r of rows) {
+      r.ingestion_health =
+        r.last_delivery_at === null ? "waiting"
+        : r.failed_deliveries > 0 || r.backfill_status === "failed" || r.backfill_status === "partial" ? "degraded"
+        : "live";
+    }
     return c.json(rows);
+  });
+
+  // Re-runs this repository's stored failed deliveries (e.g. after a bug fix
+  // is deployed), then does the same follow-up work as a live delivery.
+  app.post("/projects/:projectId/repositories/:repositoryId/deliveries/retry", async (c) => {
+    const { projectId, repositoryId } = c.req.param();
+    const { rowCount } = await db.query("select 1 from repositories where project_id = $1 and repository_id = $2", [
+      projectId,
+      repositoryId,
+    ]);
+    if (!rowCount) notFound("repository");
+    const { results, ...counts } = await retryFailedDeliveries(db, repositoryId);
+    for (const result of results) afterDelivery(result);
+    return c.json(counts);
   });
 
   app.post("/webhooks/github", async (c) => {
@@ -190,36 +146,10 @@ export function registerIngestionRoutes(
       throw new HTTPException(400, { message: "payload must be JSON" });
     }
 
-    const githubRepoId = payload?.repository?.id;
-    const { rows: repos } =
-      typeof githubRepoId === "number"
-        ? await db.query("select repository_id, project_id from repositories where github_repository_id = $1", [githubRepoId])
-        : { rows: [] };
-    if (repos.length === 0) notFound("repository");
-
-    const delivery: Delivery = { deliveryId, githubEvent, payload, payloadJson, repos, receivedAt: new Date().toISOString() };
-    let result: IngestResult;
-    try {
-      result = await withTransaction(db, (tx) => ingestDelivery(tx, delivery));
-    } catch (err) {
-      // The transaction rolled back; record the failure separately so it's
-      // findable (webhook_deliveries_failed_idx) and retryable via redelivery.
-      await db
-        .query(
-          `insert into webhook_deliveries (github_delivery_id, github_event, action, payload, status, error, received_at, processed_at)
-           values ($1, $2, $3, $4::jsonb, 'failed', $5, $6, now())
-           on conflict (github_delivery_id) do update set status = 'failed', error = excluded.error, processed_at = now()`,
-          [deliveryId, githubEvent, payload?.action ?? null, payloadJson, String(err), delivery.receivedAt],
-        )
-        .catch((recordErr) => console.error("could not record failed delivery", deliveryId, recordErr));
-      throw err;
-    }
-
-    if (result.duplicate) return c.json({ status: "duplicate" }, 200);
-    if (result.inserted > 0) {
-      onEventsIngested?.([...new Set(repos.map((repo) => repo.project_id))]);
-    }
-    if (result.pushedBranches.length > 0) onBranchesPushed?.(result.pushedBranches);
+    const result = await processDelivery(db, { deliveryId, githubEvent, payload, payloadJson, receivedAt: new Date().toISOString() });
+    if (result.kind === "unknown_repository") notFound("repository");
+    if (result.kind === "duplicate") return c.json({ status: "duplicate" }, 200);
+    afterDelivery(result);
     return c.json({ status: result.status, events: result.inserted }, 202);
   });
 }

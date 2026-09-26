@@ -100,3 +100,25 @@ export interface TaskOverride {
   task_id: string;
   override_status: DerivedStatus;
 }
+
+export interface BranchState {
+  repository_id: string;
+  branch: string;
+  status: "active" | "merged" | "deleted" | "stale";
+  task_id: string | null;
+  open_pr_number: number | null;
+  last_activity_at: Date | null;
+}
+
+export interface DerivedTaskState {
+  task_id: string;
+  computed_status: DerivedStatus;
+  override_status: DerivedStatus | null;
+  effective_status: DerivedStatus;
+  confidence: number;
+  evidence_event_ids: string[];
+  last_activity_at: Date | null;
+  blocking_task_ids: string[];
+  explanation: string;
+  computation_method: "rules";
+}

@@ -28,6 +28,7 @@ export function event(
   overrides: Partial<GithubEvent> & Pick<GithubEvent, "event_id" | "event_type">,
 ): GithubEvent {
   return {
+    repository_id: "repo_1",
     actor: "dev",
     occurred_at: T0,
     branch: null,

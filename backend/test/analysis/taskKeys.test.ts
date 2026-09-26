@@ -29,6 +29,7 @@ describe("extractEventTaskKeys", () => {
   it("prefers the PR title over branch and commit", () => {
     const event: GithubEvent = {
       event_id: "evt_1",
+      repository_id: "repo_1",
       event_type: "pull_request_opened",
       actor: "user123",
       occurred_at: new Date(),

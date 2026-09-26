@@ -74,6 +74,7 @@ export interface PullRequestInfo {
 
 export interface GithubEvent {
   event_id: string;
+  repository_id: string;
   event_type: GithubEventType;
   actor: string | null;
   occurred_at: Date;

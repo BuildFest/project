@@ -108,3 +108,44 @@ describe("GET /projects/:projectId/replans", () => {
     expect((await call("GET", `/projects/proj_missing/replans`)).status).toBe(404);
   });
 });
+
+async function timeline(s: Seed) {
+  const { rows } = await pool.query(
+    "select kind, title, actor, entity_id from timeline_items where project_id = $1 order by kind",
+    [s.project],
+  );
+  return rows;
+}
+
+describe("POST .../replans/:suggestionId/reject", () => {
+  it("rejects a proposed suggestion and records who did it", async () => {
+    const s = await seedProject();
+    const id = await addSuggestion(s, [{ op: "update_task", task_id: s.auth, changes: { priority: "critical" } }]);
+
+    const res = await call("POST", `/projects/${s.project}/replans/${id}/reject`, { member_id: s.member });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ suggestion_id: id, status: "rejected", reviewed_by: s.member });
+    expect(res.body.reviewed_at).toEqual(expect.any(String));
+    expect(await timeline(s)).toEqual([
+      { kind: "replan_reviewed", title: "Replan rejected", actor: s.member, entity_id: id },
+    ]);
+    const { rows } = await pool.query("select priority from tasks where task_id = $1", [s.auth]);
+    expect(rows[0].priority).toBe("high");
+  });
+
+  it("refuses to review twice, and checks the member and suggestion exist", async () => {
+    const s = await seedProject();
+    const id = await addSuggestion(s, []);
+    const path = `/projects/${s.project}/replans/${id}/reject`;
+
+    expect((await call("POST", path, { member_id: "mem_stranger" })).status).toBe(400);
+    expect((await call("POST", path, {})).status).toBe(400);
+    expect((await call("POST", path, { member_id: s.member })).status).toBe(200);
+    const again = await call("POST", path, { member_id: s.member });
+    expect(again.status).toBe(409);
+    expect(again.body.error).toContain("rejected");
+    expect((await call("POST", `/projects/${s.project}/replans/rp_missing/reject`, { member_id: s.member })).status).toBe(
+      404,
+    );
+  });
+});

@@ -122,3 +122,21 @@ export interface DerivedTaskState {
   explanation: string;
   computation_method: "rules";
 }
+
+export type HealthSignalType =
+  | "milestone_slipping"
+  | "dependency_incomplete"
+  | "must_have_no_activity"
+  | "plan_state_disagreement"
+  | "task_possibly_blocked";
+
+export interface DesiredHealthSignal {
+  type: HealthSignalType;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  explanation: string;
+  related_task_ids: string[];
+  related_milestone_ids: string[];
+  evidence_event_ids: string[];
+  fingerprint: string;
+}

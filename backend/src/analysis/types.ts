@@ -120,7 +120,7 @@ export interface DerivedTaskState {
   last_activity_at: Date | null;
   blocking_task_ids: string[];
   explanation: string;
-  computation_method: "rules";
+  computation_method: "rules" | "llm" | "rules+llm";
 }
 
 export type HealthSignalType =

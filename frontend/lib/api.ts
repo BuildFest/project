@@ -8,6 +8,8 @@ import * as analyzer from "./mockAnalyzer";
 import * as mock from "./mockApi";
 import type {
   ApiErrorBody,
+  ConnectRepositoryResult,
+  Repository,
   DerivedStatus,
   DerivedTaskState,
   ProjectState,
@@ -204,4 +206,24 @@ export async function dismissCollision(projectId: string, collisionId: string, m
     status: "dismissed",
     member_id: memberId,
   });
+}
+
+// ---- repositories (contract §4.1–4.3) ----------------------------------------
+
+export async function listRepositories(projectId: string): Promise<Repository[]> {
+  if (usingMockApi) return mock.listRepositories(projectId);
+  return http<Repository[]>("GET", `/projects/${enc(projectId)}/repositories`);
+}
+
+export async function connectRepository(projectId: string, fullName: string): Promise<ConnectRepositoryResult> {
+  if (usingMockApi) return mock.connectRepository(projectId, fullName);
+  return http<ConnectRepositoryResult>("POST", `/projects/${enc(projectId)}/repositories`, {
+    full_name: fullName.trim(),
+    make_primary: true,
+  });
+}
+
+export async function startBackfill(projectId: string, repositoryId: string): Promise<{ started_at: string }> {
+  if (usingMockApi) return mock.startBackfill(projectId, repositoryId);
+  return http("POST", `/projects/${enc(projectId)}/repositories/${enc(repositoryId)}/backfill`);
 }

@@ -415,3 +415,71 @@ export function mockWorkspace(projectId: string): ProjectWorkspace {
   if (!w) throw new Error("Project not found");
   return w;
 }
+
+// ============================================================================
+// Repositories (mock). Simulates GitHub's webhook "ping" a few seconds after
+// connecting so the UI's pending -> connected transition can be tested.
+// ============================================================================
+
+const REPOS_KEY = "pitcrew.mock.repos.v1";
+
+function loadRepos(): Record<string, import("./types").Repository[]> {
+  try {
+    return JSON.parse(localStorage.getItem(REPOS_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+export async function listRepositories(projectId: string) {
+  const all = loadRepos();
+  const now = Date.now();
+  let changed = false;
+  for (const r of all[projectId] ?? []) {
+    if (r.connection_status === "pending" && r.connected_at && now - new Date(r.connected_at).getTime() > 8000) {
+      r.connection_status = "connected";
+      r.last_event_at = new Date().toISOString();
+      changed = true;
+    }
+  }
+  if (changed) localStorage.setItem(REPOS_KEY, JSON.stringify(all));
+  return all[projectId] ?? [];
+}
+
+export async function connectRepository(projectId: string, fullName: string) {
+  const m = fullName.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/+$/, "");
+  if (!/^[\w.-]+\/[\w.-]+$/.test(m)) throw new Error(`GitHub doesn't know "${fullName}". Use owner/repo, e.g. BuildFest/project.`);
+  const all = loadRepos();
+  if ((all[projectId] ?? []).some((r) => r.full_name.toLowerCase() === m.toLowerCase())) {
+    throw new Error("That repository is already connected to this project.");
+  }
+  const [owner, name] = m.split("/");
+  const repo: import("./types").Repository = {
+    repository_id: newId("repo"),
+    project_id: projectId,
+    provider: "github",
+    owner,
+    name,
+    full_name: m,
+    default_branch: "main",
+    connection_status: "pending",
+    connected_at: new Date().toISOString(), // mock: used as "created" for the fake ping
+    last_backfill_at: null,
+    last_event_at: null,
+  };
+  all[projectId] = [...(all[projectId] ?? []), repo];
+  localStorage.setItem(REPOS_KEY, JSON.stringify(all));
+  return {
+    repository: repo,
+    webhook_url: "https://pitcrew.example.dev/webhooks/github",
+    webhook_secret: crypto.randomUUID().replace(/-/g, ""),
+  };
+}
+
+export async function startBackfill(projectId: string, repositoryId: string) {
+  const all = loadRepos();
+  const r = (all[projectId] ?? []).find((x) => x.repository_id === repositoryId);
+  if (r) r.last_backfill_at = new Date().toISOString();
+  localStorage.setItem(REPOS_KEY, JSON.stringify(all));
+  return { started_at: new Date().toISOString() };
+}

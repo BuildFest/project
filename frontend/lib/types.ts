@@ -318,3 +318,10 @@ export interface TaskEvidence {
   links: Array<EventTaskLink & { event: GithubEvent }>; // not rejected, newest first
   signals: HealthSignal[]; // active, mentioning this task
 }
+
+// Contract §4.1 — returned once when a repository is connected.
+export interface ConnectRepositoryResult {
+  repository: Repository;
+  webhook_url: string;
+  webhook_secret: string; // only ever shown here; GET never returns it
+}

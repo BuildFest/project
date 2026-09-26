@@ -303,6 +303,11 @@ Called by GitHub, not by the frontend. It takes the raw payload plus the
 `github_events` and update `branch_states`; other events are stored as
 `ignored`. Normalization runs inline in one transaction (cheap, no GitHub API
 calls). Analysis still happens after the response, never inline (tech doc §3).
+A debounced per-project runner performs task linking, branch derivation,
+rules and guarded AI review after commit. A 60-second sweep covers
+time-dependent health signals; `npm run analyze -- <projectId>` runs the same
+pipeline manually. AI credentials are optional and deterministic rules remain
+the fallback.
 A delivery that fails is stored as `failed` and GitHub's **Redeliver** retries it.
 
 ### 4.5 ✅ `GET /projects/:projectId/events`

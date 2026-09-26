@@ -4,7 +4,7 @@ import { loadEnvFile } from "node:process";
 import { serve } from "@hono/node-server";
 import { loadAiConfig } from "./ai/config.js";
 import { createModelRouter } from "./ai/router.js";
-import { linkProjectEvents } from "./analysis/linkEvents.js";
+import { createAnalysisScheduler, startAnalysisSweep } from "./analysis/runner.js";
 import { createApp } from "./api/app.js";
 import { requireEnv } from "./config.js";
 import { createPool } from "./db.js";
@@ -24,15 +24,9 @@ if (process.env.NODE_ENV === "production") requireEnv("PUBLIC_BASE_URL");
 const port = Number(process.env.PORT ?? 8787);
 const db = createPool();
 const router = createModelRouter(loadAiConfig());
-const analyzeProjects = (projectIds: string[]) => {
-  for (const projectId of projectIds) {
-    setImmediate(() => {
-      void linkProjectEvents(db, router, projectId).catch((error) => {
-        console.error("task linking failed", { projectId, error });
-      });
-    });
-  }
-};
+const scheduleAnalysis = createAnalysisScheduler(db, router);
+startAnalysisSweep(db, scheduleAnalysis);
+const analyzeProjects = (projectIds: string[]) => projectIds.forEach(scheduleAnalysis);
 
 // After each push to a feature branch, recompute its changed files (debounced).
 const refreshBranches = createCompareScheduler(db);

@@ -155,6 +155,46 @@ describe("deriveTaskStates", () => {
     expect(states[0].explanation).toContain("PC-1 API (not_started)");
   });
 
+  it("treats a prerequisite that is under way as parallel work, not a blocker", () => {
+    const commit = (id: string, branch: string) => event({ event_id: id, event_type: "commit", branch });
+    const deps = [{ task_id: "work", depends_on_task_id: "dep" }];
+    const byEvidence = derive(
+      [task({ task_id: "dep", task_key: "PC-1" }), task({ task_id: "work", task_key: "PC-2" })],
+      [commit("dep-event", "api"), commit("work-event", "ui")],
+      [link("dep-event", "dep"), link("work-event", "work")],
+      deps,
+    );
+    expect(byEvidence[1]).toMatchObject({ computed_status: "in_progress", blocking_task_ids: [] });
+
+    for (const plan_status of ["in_progress", "complete"] as const) {
+      const byPlan = derive(
+        [task({ task_id: "dep", task_key: "PC-1", plan_status }), task({ task_id: "work", task_key: "PC-2" })],
+        [commit("work-event", "ui")],
+        [link("work-event", "work")],
+        deps,
+      );
+      expect(byPlan[1].computed_status).toBe("in_progress");
+    }
+  });
+
+  it("passes a block down a chain that starts with unstarted work", () => {
+    const tasks = [
+      task({ task_id: "a", task_key: "PC-1" }),
+      task({ task_id: "b", task_key: "PC-2" }),
+      task({ task_id: "c", task_key: "PC-3" }),
+    ];
+    const events = [event({ event_id: "b1", event_type: "commit", branch: "b" }), event({ event_id: "c1", event_type: "commit", branch: "c" })];
+    const states = derive(tasks, events, [link("b1", "b"), link("c1", "c")], [
+      { task_id: "b", depends_on_task_id: "a" },
+      { task_id: "c", depends_on_task_id: "b" },
+    ]);
+    expect(states.map((s) => [s.computed_status, s.blocking_task_ids])).toEqual([
+      ["not_started", []],
+      ["possibly_blocked", ["a"]],
+      ["possibly_blocked", ["b"]],
+    ]);
+  });
+
   it("uses a prerequisite override when evaluating a dependent", () => {
     const tasks = [task({ task_id: "dep", task_key: "PC-1" }), task({ task_id: "work", task_key: "PC-2" })];
     const commit = event({ event_id: "work-event", event_type: "commit" });

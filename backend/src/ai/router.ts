@@ -72,6 +72,8 @@ export function createModelRouter(config: AiConfig, deps: RouterDeps = {}): Mode
   const cache = new Map<string, { result: CompletionResult; tier: Tier }>();
   let budgetDay = "";
   let tokensToday = 0;
+  // Start times of recent calls each job sent to its own tier, for jobHourlyLimits.
+  const primaryCalls = new Map<AiJob, number[]>();
 
   function client(tier: Tier): ModelClient {
     let c = clients.get(tier);
@@ -98,6 +100,15 @@ export function createModelRouter(config: AiConfig, deps: RouterDeps = {}): Mode
 
   function tiersFor(job: AiJob): Tier[] {
     return config.jobs[job] === "smart" ? ["smart", "fast"] : ["fast"];
+  }
+
+  function overHourlyLimit(job: AiJob): boolean {
+    const limit = config.jobHourlyLimits[job];
+    if (!limit) return false;
+    const cutoff = now().getTime() - 3_600_000;
+    const recent = (primaryCalls.get(job) ?? []).filter((at) => at > cutoff);
+    primaryCalls.set(job, recent);
+    return recent.length >= limit;
   }
 
   return {
@@ -128,14 +139,22 @@ export function createModelRouter(config: AiConfig, deps: RouterDeps = {}): Mode
       }
       if (overBudget()) throw new AiUnavailableError("daily AI token budget exhausted");
 
+      let tiers = tiersFor(job);
+      if (overHourlyLimit(job)) {
+        record(primary, { error: `hourly limit reached for ${job}` });
+        tiers = tiers.filter((tier) => tier !== primary);
+        if (tiers.length === 0) throw new AiUnavailableError(`hourly limit reached for ${job}`);
+      }
+
       let lastError: unknown;
-      for (const tier of tiersFor(job)) {
+      for (const tier of tiers) {
         const tierConfig = config.tiers[tier];
         if (!tierConfig.apiKey) {
           record(tier, { error: `no API key for ${tierConfig.provider}` });
           continue;
         }
         const started = now().getTime();
+        if (tier === primary) primaryCalls.set(job, [...(primaryCalls.get(job) ?? []), started]);
         try {
           const result = await client(tier).complete(request);
           spend(result.inputTokens + result.outputTokens);

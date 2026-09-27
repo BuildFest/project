@@ -8,13 +8,15 @@ import ActingAs from "@/components/ActingAs";
 import Overview from "@/components/Overview";
 import PlanAgentWorkspace from "@/components/PlanAgentWorkspace";
 import TeamTab from "@/components/TeamTab";
-import { getProject } from "@/lib/api";
+import { getProject, listStatusMoves, usingMockApi } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
 import { IconChecklist, IconCommit, IconPeople, IconProject, IconPulse } from "@/components/Icons";
 import { pillCls } from "@/lib/ui";
 
 type Tab = "overview" | "plan" | "activity" | "team";
 const TABS: Tab[] = ["overview", "plan", "activity", "team"];
+
+const MOVES_POLL_MS = 30_000;
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -31,6 +33,27 @@ export default function ProjectPage() {
     getProject(id)
       .then((w) => setWorkspace(w ?? null))
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Couldn't load project."));
+  }, [id]);
+
+  // The planning agent changes task statuses in the background. Watch its
+  // moves (and undos) and reload the workspace when they change.
+  useEffect(() => {
+    if (usingMockApi) return;
+    let last: string | null = null;
+    const check = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const moves = await listStatusMoves(id);
+        const signature = moves.slice(0, 50).map((m) => `${m.move_id}:${m.undone_at ?? ""}`).join(",");
+        if (last !== null && signature !== last) setWorkspace((await getProject(id)) ?? null);
+        last = signature;
+      } catch {
+        // An older backend without status moves, or a blip: try again next tick.
+      }
+    };
+    void check();
+    const timer = setInterval(() => void check(), MOVES_POLL_MS);
+    return () => clearInterval(timer);
   }, [id]);
 
   function selectTab(t: Tab) {

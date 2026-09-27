@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, createDecision, createManualLink, listAiRuns, listDecisions, listTimeline, usingMockApi } from "@/lib/api";
+import { ApiError, createDecision, createManualLink, listAiRuns, listDecisions, listStatusMoves, listTimeline, undoStatusMove, usingMockApi } from "@/lib/api";
 import { useActingMember } from "@/lib/actingAs";
-import type { AiRun, Decision, ProjectWorkspace, TimelineItem, TimelineKind } from "@/lib/types";
-import { buttonCls, ghostButtonCls, inputCls, timeAgo } from "@/lib/ui";
+import type { AiRun, Decision, ProjectWorkspace, StatusMove, TimelineItem, TimelineKind } from "@/lib/types";
+import { actorName, buttonCls, ghostButtonCls, inputCls, timeAgo } from "@/lib/ui";
 
 const POLL_MS = 20_000;
 type Filter = "all" | "github" | "plan" | "risk" | "decision" | "fails";
@@ -24,6 +24,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const [items, setItems] = useState<TimelineItem[] | null>(null);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [fails, setFails] = useState<AiRun[] | null>(null);
+  const [moves, setMoves] = useState<StatusMove[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [taskId, setTaskId] = useState("");
@@ -37,15 +38,17 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const [decisionTasks, setDecisionTasks] = useState<string[]>([]);
 
   const loadFirst = useCallback(async () => {
-    const [page, knownDecisions, failedRuns] = await Promise.all([
+    const [page, knownDecisions, failedRuns, knownMoves] = await Promise.all([
       listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
       listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items, () => []),
+      listStatusMoves(pid).catch(() => [] as StatusMove[]),
     ]);
     setItems(page.items);
     setCursor(page.next_cursor);
     setDecisions(knownDecisions);
     setFails(failedRuns);
+    setMoves(knownMoves);
     setError(null);
   }, [pid, taskId]);
 
@@ -55,13 +58,15 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
       listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
       listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items, () => []),
+      listStatusMoves(pid).catch(() => [] as StatusMove[]),
     ]).then(
-      ([page, knownDecisions, failedRuns]) => {
+      ([page, knownDecisions, failedRuns, knownMoves]) => {
         if (cancelled) return;
         setItems(page.items);
         setCursor(page.next_cursor);
         setDecisions(knownDecisions);
         setFails(failedRuns);
+        setMoves(knownMoves);
         setError(null);
       },
       (e) => !cancelled && setError(e instanceof Error ? e.message : "Couldn't load updates."),
@@ -119,6 +124,11 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const visible = useMemo(() => summarizeUpdates((items ?? []).filter((item) => matches(item.kind, filter))), [items, filter]);
   const groups = useMemo(() => groupByDay(visible), [visible]);
   const decisionById = useMemo(() => new Map(decisions.map((d) => [d.decision_id, d])), [decisions]);
+  const movesByBatch = useMemo(() => {
+    const byBatch = new Map<string, StatusMove[]>();
+    for (const m of moves) byBatch.set(m.batch_id, [...(byBatch.get(m.batch_id) ?? []), m]);
+    return byBatch;
+  }, [moves]);
   const tasksById = useMemo(() => new Map(workspace.tasks.map((t) => [t.task_id, t])), [workspace.tasks]);
 
   return <div className="mx-auto max-w-5xl">
@@ -171,6 +181,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
         <h3 className="mb-4 text-xs font-semibold uppercase tracking-[.14em] text-faint">{group.label}</h3>
         <ol>{group.items.map((item, index) => <EventRow key={item.item_id} item={item} first={index === 0} last={index === group.items.length - 1}
           workspace={workspace} decision={decisionById.get(item.entity_id)}
+          batch={item.entity_type === "plan_status_batches" ? movesByBatch.get(item.entity_id) : undefined}
           tasksById={tasksById} onLinked={loadFirst} />)}</ol>
       </section>)}</div>
     )}
@@ -179,8 +190,8 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   </div>;
 }
 
-function EventRow({ item, first, last, workspace, decision, tasksById, onLinked }: {
-  item: TimelineItem; first: boolean; last: boolean; workspace: ProjectWorkspace; decision?: Decision;
+function EventRow({ item, first, last, workspace, decision, batch, tasksById, onLinked }: {
+  item: TimelineItem; first: boolean; last: boolean; workspace: ProjectWorkspace; decision?: Decision; batch?: StatusMove[];
   tasksById: Map<string, ProjectWorkspace["tasks"][number]>; onLinked: () => Promise<void>;
 }) {
   const { member } = useActingMember(workspace);
@@ -200,7 +211,7 @@ function EventRow({ item, first, last, workspace, decision, tasksById, onLinked 
   }
 
   const decisionRationale = item.kind === "decision" ? uniqueRationale(item.title, item.summary, decision?.body ?? null) : null;
-  const hasDetails = (item.kind !== "decision" && !!item.summary) || item.related_task_ids.length > 0 || item.kind === "github_event";
+  const hasDetails = (item.kind !== "decision" && !!item.summary) || item.related_task_ids.length > 0 || item.kind === "github_event" || !!batch?.length;
   const grouped = item.summary?.match(/(\d+) related changes grouped together/);
   return <li className="grid grid-cols-[20px_minmax(0,1fr)] gap-2">
     <div className="relative flex justify-center">
@@ -223,8 +234,10 @@ function EventRow({ item, first, last, workspace, decision, tasksById, onLinked 
           <span className="font-medium text-muted">Context</span>
           <button className="font-medium text-faint hover:text-header" onClick={() => setExpanded(false)}>Close context</button>
         </div>
+        {batch?.length ? <BatchMoves moves={batch} workspace={workspace} tasksById={tasksById} onChanged={onLinked} /> : <>
         {item.kind !== "decision" && item.summary && <p className="text-sm leading-6 text-muted">{item.summary}</p>}
         {item.related_task_ids.length > 0 && <p className="mt-1.5 text-xs text-muted">Tasks: {item.related_task_ids.map((id) => tasksById.get(id)?.task_key ?? id).join(", ")}</p>}
+        </>}
         {item.kind === "github_event" && <div className="mt-2 flex flex-wrap items-center gap-2">
           <select aria-label="Task to link" className={`${inputCls} !py-1 text-xs`} value={linkTask} onChange={(e) => setLinkTask(e.target.value)}>
             <option value="">Link to task…</option>
@@ -235,6 +248,52 @@ function EventRow({ item, first, last, workspace, decision, tasksById, onLinked 
       </div>}
     </article>
   </li>;
+}
+
+// The tasks one plan sync moved, each with its evidence and its own Undo.
+function BatchMoves({ moves, workspace, tasksById, onChanged }: {
+  moves: StatusMove[]; workspace: ProjectWorkspace;
+  tasksById: Map<string, ProjectWorkspace["tasks"][number]>; onChanged: () => Promise<void>;
+}) {
+  const { member } = useActingMember(workspace);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const label = (s: string) => s === "not_started" ? "Not started" : s === "in_progress" ? "In progress" : "Complete";
+
+  async function undo(move: StatusMove) {
+    if (!member) return;
+    setBusy(move.move_id);
+    setError(null);
+    try {
+      await undoStatusMove(workspace.project.project_id, move.move_id, member.member_id);
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't undo this change.");
+    } finally { setBusy(null); }
+  }
+
+  const ordered = [...moves].sort((a, b) => {
+    const ka = tasksById.get(a.task_id)?.task_key ?? "", kb = tasksById.get(b.task_id)?.task_key ?? "";
+    return ka.length - kb.length || ka.localeCompare(kb);
+  });
+  return <div>
+    {error && <p className="mb-1.5 text-xs text-red" role="alert">{error}</p>}
+    <ul className="space-y-1.5">
+      {ordered.map((move) => {
+        const task = tasksById.get(move.task_id);
+        return <li key={move.move_id} className="flex flex-wrap items-baseline gap-x-2 text-sm">
+          <span className="font-mono text-xs text-muted">{task?.task_key ?? "Task"}</span>
+          <span className={move.undone_at ? "text-faint line-through" : "text-text"}>{label(move.from_status)} → {label(move.to_status)}</span>
+          <span className="min-w-0 truncate text-xs text-faint">{move.reason}</span>
+          {move.undone_at
+            ? <span className="text-xs text-faint">Undone{move.undone_by ? ` by ${actorName(workspace, move.undone_by)}` : ""}</span>
+            : <button className="text-xs font-medium text-link hover:underline disabled:opacity-50" disabled={!member || busy !== null}
+                title={member ? "Put the task back and leave its status to the team" : "Choose who you're acting as to undo"}
+                onClick={() => void undo(move)}>{busy === move.move_id ? "Undoing…" : "Undo"}</button>}
+        </li>;
+      })}
+    </ul>
+  </div>;
 }
 
 function DecisionForm({ workspace, title, body, selected, setTitle, setBody, setSelected, onSave, onCancel }: {

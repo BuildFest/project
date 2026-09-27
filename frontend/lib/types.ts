@@ -74,7 +74,8 @@ export interface Task {
   owner_member_id: string | null;
   priority: Priority;
   scope: Scope;
-  plan_status: PlanStatus; // team-authored; never written by inference
+  plan_status: PlanStatus; // team-authored, except the agent's forward-only moves (StatusMove)
+  plan_status_set_by?: string | null; // null = never changed, "agent", or a person
   milestone_id: string | null;
   target_at: string | null;
   sort_order: number;
@@ -433,6 +434,22 @@ export interface AiRun {
 }
 
 // Contract §6.2
+// A plan status change the planning agent made on its own (forward-only,
+// evidence-backed). Undoing restores from_status and hands the status back to the team.
+export interface StatusMove {
+  move_id: string;
+  project_id: string;
+  batch_id: string; // moves from one sync share it; the timeline item names the batch
+  task_id: string;
+  from_status: "not_started" | "in_progress";
+  to_status: "in_progress" | "complete";
+  reason: string;
+  evidence_event_ids: string[];
+  created_at: string;
+  undone_by: string | null; // member_id
+  undone_at: string | null;
+}
+
 export interface Decision {
   decision_id: string;
   project_id: string;

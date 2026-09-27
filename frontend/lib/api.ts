@@ -29,6 +29,7 @@ import type {
   PlanAgentResult,
   Page,
   ProjectWorkspace,
+  StatusMove,
   Task,
   TaskDependency,
   TimelineItem,
@@ -240,6 +241,16 @@ export async function getState(projectId: string): Promise<ProjectState> {
 export async function bootstrapPlanFromBrief(projectId: string, memberId: string | null): Promise<PlanAgentResult> {
   if (usingMockApi) return mock.bootstrapPlanFromBrief(projectId);
   return http<PlanAgentResult>("POST", `/projects/${enc(projectId)}/plan-agent/bootstrap`, { member_id: memberId });
+}
+
+export async function listStatusMoves(projectId: string): Promise<StatusMove[]> {
+  if (usingMockApi) return [];
+  return http<StatusMove[]>("GET", `/projects/${enc(projectId)}/status-moves`);
+}
+
+export async function undoStatusMove(projectId: string, moveId: string, memberId: string): Promise<StatusMove> {
+  if (usingMockApi) throw new Error("Undo needs the live backend.");
+  return http<StatusMove>("POST", `/projects/${enc(projectId)}/status-moves/${enc(moveId)}/undo`, { member_id: memberId });
 }
 
 export async function runPlanningAgent(projectId: string, memberId: string | null): Promise<PlanAgentResult> {

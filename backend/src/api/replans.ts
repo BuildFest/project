@@ -83,7 +83,11 @@ async function applyChange(
 ): Promise<string[]> {
   switch (change.op) {
     case "update_task": {
-      const set = setClause(change.changes, 4);
+      // A status the team accepted is theirs, like one they typed.
+      const changes = change.changes.plan_status === undefined
+        ? change.changes
+        : { ...change.changes, plan_status_set_by: memberId };
+      const set = setClause(changes, 4);
       const { rowCount } = await tx.query(
         `update tasks set ${set.sql}, updated_in_plan_version = $3
           where project_id = $1 and task_id = $2 and not archived`,
@@ -98,13 +102,15 @@ async function applyChange(
       const taskId = newId("task");
       await tx.query(
         `insert into tasks (task_id, task_key, project_id, title, description, owner_member_id, priority, scope,
-                            plan_status, milestone_id, target_at, sort_order, created_in_plan_version)
+                            plan_status, milestone_id, target_at, sort_order, created_in_plan_version,
+                            plan_status_set_by)
          values ($1, $2, $3, $4, $5, $6, coalesce($7, 'medium'), coalesce($8, 'must_have'),
-                 coalesce($9, 'not_started'), $10, $11, coalesce($12, 0), $13)`,
+                 coalesce($9, 'not_started'), $10, $11, coalesce($12, 0), $13, $14)`,
         [
           taskId, task_key, projectId, t.title, t.description ?? null, t.owner_member_id ?? null,
           t.priority ?? null, t.scope ?? null, t.plan_status ?? null, t.milestone_id ?? null,
           t.target_at ?? null, t.sort_order ?? null, version,
+          t.plan_status && t.plan_status !== "not_started" ? memberId : null,
         ],
       );
       return [taskId];

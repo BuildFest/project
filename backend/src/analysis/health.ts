@@ -137,7 +137,8 @@ export function deriveHealthSignals(input: DeriveHealthSignalsInput): DesiredHea
     const prerequisite = taskById.get(dependency.depends_on_task_id);
     const prerequisiteState = stateByTask.get(dependency.depends_on_task_id);
     const prEvidence = currentPrByTask.get(dependency.task_id) ?? [];
-    if (!task || !prerequisite || prerequisiteState?.effective_status === "complete" || prEvidence.length === 0) continue;
+    if (!task || !prerequisite || prEvidence.length === 0) continue;
+    if (prerequisiteState?.effective_status === "complete" || prerequisite.plan_status === "complete") continue;
     const pr = prEvidence[0].pull_request;
     signals.push({
       type: "dependency_incomplete",

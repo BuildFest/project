@@ -1,14 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, createDecision, createManualLink, listDecisions, listEvents, listTimeline, usingMockApi } from "@/lib/api";
+import { ApiError, createDecision, createManualLink, listDecisions, listTimeline, usingMockApi } from "@/lib/api";
 import { useActingMember } from "@/lib/actingAs";
-import type { Decision, GithubEvent, ProjectWorkspace, TimelineItem, TimelineKind } from "@/lib/types";
+import type { Decision, ProjectWorkspace, TimelineItem, TimelineKind } from "@/lib/types";
 import { buttonCls, ghostButtonCls, inputCls, timeAgo } from "@/lib/ui";
 
 const POLL_MS = 20_000;
 type Filter = "all" | "github" | "plan" | "risk" | "decision";
-type ActivityView = "code" | "history";
 
 const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: "all", label: "Everything" },
@@ -25,7 +24,6 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
-  const [activityView, setActivityView] = useState<ActivityView>("code");
   const [taskId, setTaskId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -38,18 +36,18 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
 
   const loadFirst = useCallback(async () => {
     const [page, knownDecisions] = await Promise.all([
-      loadActivityPage(pid, activityView, { task_id: taskId || undefined, limit: 50 }),
+      listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
     ]);
     setItems(page.items);
     setCursor(page.next_cursor);
     setDecisions(knownDecisions);
     setError(null);
-  }, [pid, taskId, activityView]);
+  }, [pid, taskId]);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadActivityPage(pid, activityView, { task_id: taskId || undefined, limit: 50 }), listDecisions(pid)]).then(
+    Promise.all([listTimeline(pid, { task_id: taskId || undefined, limit: 50 }), listDecisions(pid)]).then(
       ([page, knownDecisions]) => {
         if (cancelled) return;
         setItems(page.items);
@@ -60,7 +58,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
       (e) => !cancelled && setError(e instanceof Error ? e.message : "Couldn't load updates."),
     );
     return () => { cancelled = true; };
-  }, [pid, taskId, activityView]);
+  }, [pid, taskId]);
 
   useEffect(() => {
     if (usingMockApi) return;
@@ -74,7 +72,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
     if (!cursor) return;
     setLoadingMore(true);
     try {
-      const page = await loadActivityPage(pid, activityView, { task_id: taskId || undefined, limit: 50, cursor });
+      const page = await listTimeline(pid, { task_id: taskId || undefined, limit: 50, cursor });
       setItems((old) => [...(old ?? []), ...page.items]);
       setCursor(page.next_cursor);
     } catch (e) {
@@ -134,20 +132,9 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
     {decisionOpen && <DecisionForm workspace={workspace} title={title} body={body} selected={decisionTasks}
       setTitle={setTitle} setBody={setBody} setSelected={setDecisionTasks} onSave={saveDecision} onCancel={() => setDecisionOpen(false)} />}
 
-    <div className="border-b border-line py-4">
-      <div className="inline-flex rounded-md border border-line-strong bg-bg p-0.5">
-      <button onClick={() => { setActivityView("code"); setFilter("all"); }} className={`rounded px-3 py-1.5 text-sm ${activityView === "code" ? "bg-btn font-medium text-header" : "text-muted hover:text-header"}`}>
-        Development
-      </button>
-      <button onClick={() => setActivityView("history")} className={`rounded px-3 py-1.5 text-sm ${activityView === "history" ? "bg-btn font-medium text-header" : "text-muted hover:text-header"}`}>
-        Project changes
-      </button>
-      </div>
-    </div>
-
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line py-4">
       <div className="flex gap-5 overflow-x-auto">
-        {(activityView === "code" ? FILTERS.slice(0, 1) : FILTERS).map((option) => <button key={option.value} onClick={() => setFilter(option.value)}
+        {FILTERS.map((option) => <button key={option.value} onClick={() => setFilter(option.value)}
           className={`border-b-2 pb-1 text-sm ${filter === option.value ? "border-signal font-medium text-header" : "border-transparent text-muted hover:text-header"}`}>
           {option.label}
         </button>)}
@@ -165,7 +152,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
       {taskId && <button className="text-xs text-link hover:underline" onClick={() => setTaskId("")}>Clear filter</button>}
     </div>}
 
-    {items === null ? <Loading /> : groups.length === 0 ? <Empty hasItems={items.length > 0} view={activityView} filtered={filter !== "all" || !!taskId} /> : (
+    {items === null ? <Loading /> : groups.length === 0 ? <Empty hasItems={items.length > 0} filtered={filter !== "all" || !!taskId} /> : (
       <div>{groups.map((group) => <section key={group.label} className="border-b border-line py-6">
         <h3 className="mb-4 text-xs font-semibold uppercase tracking-[.14em] text-faint">{group.label}</h3>
         <ol>{group.items.map((item, index) => <EventRow key={item.item_id} item={item} first={index === 0} last={index === group.items.length - 1}
@@ -279,55 +266,6 @@ function normalizeText(value: string) {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-async function loadActivityPage(
-  projectId: string,
-  view: ActivityView,
-  opts: { task_id?: string; branch?: string; limit?: number; cursor?: string | null },
-) {
-  if (view === "history") return listTimeline(projectId, opts);
-  const page = await listEvents(projectId, { branch: opts.branch, limit: opts.limit, cursor: opts.cursor });
-  return { items: page.items.map(eventAsTimelineItem), next_cursor: page.next_cursor };
-}
-
-function eventAsTimelineItem(event: GithubEvent): TimelineItem {
-  const who = event.actor ?? "Someone";
-  let title = `${who} updated the project`;
-  if (event.pull_request) {
-    const action = event.event_type.replace("pull_request_", "");
-    const wording = action === "opened" ? "opened a change for review"
-      : action === "merged" ? "merged a change"
-        : action === "closed" ? "closed a change"
-          : action === "reopened" ? "reopened a change"
-            : "updated a change under review";
-    title = `${who} ${wording}`;
-  } else if (event.commit) {
-    title = `${who} updated ${event.branch ?? "the codebase"}`;
-  } else if (event.event_type === "push") {
-    title = `${who} pushed new work${event.branch ? ` to ${event.branch}` : ""}`;
-  } else if (event.event_type === "branch_created") {
-    title = `${who} started work${event.branch ? ` on ${event.branch}` : ""}`;
-  } else if (event.event_type === "branch_deleted") {
-    title = `${who} cleaned up${event.branch ? ` ${event.branch}` : " a branch"}`;
-  }
-  const detail = [
-    event.pull_request?.title ?? event.commit?.message.split("\n")[0] ?? null,
-    event.changed_files.length ? `${event.changed_files.length} file${event.changed_files.length === 1 ? "" : "s"} changed` : null,
-    event.branch ?? null,
-  ].filter(Boolean).join(" · ");
-  return {
-    item_id: event.event_id,
-    project_id: event.project_id,
-    occurred_at: event.occurred_at,
-    kind: "github_event",
-    title,
-    summary: detail || null,
-    actor: event.actor,
-    entity_type: "github_events",
-    entity_id: event.event_id,
-    related_task_ids: [],
-  };
-}
-
 function summarizeUpdates(items: TimelineItem[]): TimelineItem[] {
   const result: TimelineItem[] = [];
   for (const item of items) {
@@ -403,12 +341,10 @@ function Loading() {
   </div>;
 }
 
-function Empty({ hasItems, view, filtered }: { hasItems: boolean; view: ActivityView; filtered: boolean }) {
-  const title = filtered || hasItems ? "No matching updates" : view === "code" ? "No development updates yet" : "No project changes yet";
+function Empty({ hasItems, filtered }: { hasItems: boolean; filtered: boolean }) {
+  const title = filtered || hasItems ? "No matching updates" : "No updates yet";
   const text = filtered || hasItems
-    ? "Try clearing a filter or choosing another branch."
-    : view === "code"
-      ? "Commits, branches, pushes, and pull requests will appear here."
-      : "Planning, decisions, risks, and development updates will appear here.";
+    ? "Try clearing a filter."
+    : "Development, planning, decisions, and risks will appear here.";
   return <div className="py-16 text-center"><div className="mx-auto mb-3 h-8 w-px bg-line-strong" /><p className="font-medium text-header">{title}</p><p className="mt-1 text-sm text-muted">{text}</p></div>;
 }

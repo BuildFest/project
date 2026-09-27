@@ -32,6 +32,33 @@ describe("loadAiConfig", () => {
     expect(() => loadAiConfig({ AI_FAST_PROVIDER: "openai" })).toThrow(/AI_FAST_MODEL/);
   });
 
+  it("configures a Microsoft Foundry agent", () => {
+    const config = loadAiConfig({
+      AI_SMART_PROVIDER: "foundry",
+      AI_SMART_MODEL: "PitCrewer",
+      AZURE_FOUNDRY_AGENT_ENDPOINT: "https://example.services.ai.azure.com/api/projects/project/agents/PitCrewer/endpoint/protocols/openai",
+      AZURE_TENANT_ID: "tenant",
+      AZURE_CLIENT_ID: "client",
+      AZURE_CLIENT_SECRET: "secret",
+    });
+    expect(config.tiers.smart).toEqual({
+      provider: "foundry",
+      model: "PitCrewer",
+      apiKey: "secret",
+      endpoint: "https://example.services.ai.azure.com/api/projects/project/agents/PitCrewer/endpoint/protocols/openai",
+      tenantId: "tenant",
+      clientId: "client",
+    });
+  });
+
+  it("requires an endpoint and Entra application IDs for Foundry", () => {
+    expect(() => loadAiConfig({
+      AI_SMART_PROVIDER: "foundry",
+      AI_SMART_MODEL: "PitCrewer",
+      AZURE_CLIENT_SECRET: "secret",
+    })).toThrow(/AZURE_FOUNDRY_AGENT_ENDPOINT/);
+  });
+
   it("rejects unknown providers and tiers", () => {
     expect(() => loadAiConfig({ AI_FAST_PROVIDER: "mystery" })).toThrow(/unknown AI provider/);
     expect(() => loadAiConfig({ AI_JOB_ASK: "medium" })).toThrow(/unknown AI tier/);

@@ -1,7 +1,9 @@
 import { postJson, type CompletionRequest, type Fetch, type ModelClient } from "./client.js";
 import type { ProviderName } from "./config.js";
 
-const BASE_URLS: Record<Exclude<ProviderName, "anthropic">, string> = {
+type ChatCompletionProvider = Exclude<ProviderName, "anthropic" | "foundry">;
+
+const BASE_URLS: Record<ChatCompletionProvider, string> = {
   groq: "https://api.groq.com/openai/v1",
   openai: "https://api.openai.com/v1",
   openrouter: "https://openrouter.ai/api/v1",
@@ -14,7 +16,7 @@ interface ChatCompletionResponse {
 
 // One client for every provider that speaks the OpenAI chat completions API.
 export function openAiCompatibleClient(
-  provider: Exclude<ProviderName, "anthropic">,
+  provider: ChatCompletionProvider,
   model: string,
   apiKey: string,
   fetchImpl: Fetch = fetch,

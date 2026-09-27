@@ -2,7 +2,7 @@
 // model: cheap, well-defined jobs go to the fast tier, open-ended reasoning to
 // the smart tier. Everything is overridable through environment variables.
 
-export type ProviderName = "groq" | "openai" | "openrouter" | "anthropic";
+export type ProviderName = "groq" | "openai" | "openrouter" | "anthropic" | "foundry";
 export type Tier = "fast" | "smart";
 export type AiJob =
   | "link_suggestion"
@@ -17,6 +17,9 @@ export interface TierConfig {
   provider: ProviderName;
   model: string;
   apiKey: string | null;
+  endpoint?: string;
+  tenantId?: string;
+  clientId?: string;
 }
 
 export interface AiConfig {
@@ -31,6 +34,7 @@ const API_KEY_ENV: Record<ProviderName, string> = {
   openai: "OPENAI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  foundry: "AZURE_CLIENT_SECRET",
 };
 
 const DEFAULT_TIERS: Record<Tier, { provider: ProviderName; model: string }> = {
@@ -76,7 +80,18 @@ export function loadAiConfig(env: Record<string, string | undefined> = process.e
       env[`${prefix}_MODEL`] ||
       (provider === DEFAULT_TIERS[tier].provider ? DEFAULT_TIERS[tier].model : undefined);
     if (!model) throw new Error(`${prefix}_MODEL must be set when ${prefix}_PROVIDER is ${provider}`);
-    tiers[tier] = { provider, model, apiKey: env[API_KEY_ENV[provider]] || null };
+    const apiKey = env[API_KEY_ENV[provider]] || null;
+    if (provider === "foundry") {
+      const endpoint = env.AZURE_FOUNDRY_AGENT_ENDPOINT?.trim();
+      const tenantId = env.AZURE_TENANT_ID?.trim();
+      const clientId = env.AZURE_CLIENT_ID?.trim();
+      if (!endpoint) throw new Error("AZURE_FOUNDRY_AGENT_ENDPOINT must be set when an AI provider is foundry");
+      if (!tenantId) throw new Error("AZURE_TENANT_ID must be set when an AI provider is foundry");
+      if (!clientId) throw new Error("AZURE_CLIENT_ID must be set when an AI provider is foundry");
+      tiers[tier] = { provider, model, apiKey, endpoint, tenantId, clientId };
+    } else {
+      tiers[tier] = { provider, model, apiKey };
+    }
   }
 
   const jobs = { ...DEFAULT_JOBS };

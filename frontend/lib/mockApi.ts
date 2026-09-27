@@ -126,6 +126,50 @@ export async function updateBrief(projectId: string, content: string) {
   });
 }
 
+export async function bootstrapPlanFromBrief(projectId: string): Promise<import("./types").PlanAgentResult> {
+  const workspace = await mutate(projectId, (w) => {
+    if (!w.brief.content.trim()) throw new Error("Write the project brief before generating a plan");
+    if (w.tasks.some((task) => !task.archived) || w.milestones.some((milestone) => !milestone.archived)) {
+      throw new Error("The project already has a plan");
+    }
+    const deadline = w.project.deadline_at;
+    const milestoneNames = ["Foundation", "Working product", "Demo ready"];
+    const milestones = milestoneNames.map((name, index): Milestone => ({
+      milestone_id: newId("ms"), project_id: projectId, name,
+      description: index === 0 ? "Core structure and contracts" : index === 1 ? "End-to-end product flow" : "Validation and polish",
+      target_at: deadline, sort_order: index, archived: false,
+    }));
+    w.milestones.push(...milestones);
+
+    const headings = w.brief.content.split("\n")
+      .map((line) => line.replace(/^#{1,6}\s+/, "").trim())
+      .filter((line) => line.length > 5 && line.length < 90 && !/^(goal|purpose|vision|architecture|notes)$/i.test(line))
+      .slice(0, 8);
+    const titles = headings.length >= 3 ? headings : [
+      "Define project model and contracts", "Build the primary workflow", "Connect repository activity",
+      "Derive project state", "Validate the end-to-end demo", "Polish the product experience",
+    ];
+    w.tasks.push(...titles.map((title, index): Task => {
+      const number = w.project.next_task_number++;
+      return {
+        task_id: newId("task"), task_key: `${w.project.task_key_prefix}-${number}`, project_id: projectId,
+        title, description: "Generated from the project brief.", owner_member_id: w.members[index % Math.max(w.members.length, 1)]?.member_id ?? null,
+        priority: index < 3 ? "high" : "medium", scope: index < 5 ? "must_have" : "optional",
+        plan_status: "not_started", milestone_id: milestones[Math.min(2, Math.floor(index * 3 / titles.length))].milestone_id,
+        target_at: deadline, sort_order: index, archived: false,
+      };
+    }));
+    for (let index = 1; index < w.tasks.length; index++) {
+      w.dependencies.push({ project_id: projectId, task_id: w.tasks[index].task_id, depends_on_task_id: w.tasks[index - 1].task_id, dependency_type: "requires" });
+    }
+    w.project.current_plan_version = 1;
+  });
+  return {
+    summary: "Created a focused plan from the brief.", milestone_count: workspace.milestones.length,
+    task_count: workspace.tasks.length, generated_by: "llm", plan_version: 1, workspace,
+  };
+}
+
 export async function addMilestone(
   projectId: string,
   input: { name: string; target_at: string | null }

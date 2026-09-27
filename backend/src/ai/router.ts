@@ -1,4 +1,5 @@
 import { anthropicClient } from "./anthropic.js";
+import { foundryAgentClient } from "./foundryAgent.js";
 import type { CompletionRequest, CompletionResult, Fetch, ModelClient } from "./client.js";
 import type { AiConfig, AiJob, Tier, TierConfig } from "./config.js";
 import { openAiCompatibleClient } from "./openaiCompatible.js";
@@ -44,6 +45,19 @@ interface RouterDeps {
 
 function defaultClient(tier: TierConfig, fetchImpl: Fetch): ModelClient {
   if (!tier.apiKey) throw new AiUnavailableError(`no API key for ${tier.provider}`);
+  if (tier.provider === "foundry") {
+    if (!tier.endpoint || !tier.tenantId || !tier.clientId) {
+      throw new AiUnavailableError("incomplete Microsoft Foundry configuration");
+    }
+    return foundryAgentClient(
+      tier.model,
+      tier.endpoint,
+      tier.tenantId,
+      tier.clientId,
+      tier.apiKey,
+      fetchImpl,
+    );
+  }
   return tier.provider === "anthropic"
     ? anthropicClient(tier.model, tier.apiKey, fetchImpl)
     : openAiCompatibleClient(tier.provider, tier.model, tier.apiKey, fetchImpl);

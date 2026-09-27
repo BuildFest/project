@@ -16,6 +16,7 @@ import { registerIntelligenceRoutes } from "./intelligence.js";
 import { registerReplanRoutes } from "./replans.js";
 import { registerTimelineRoutes } from "./timeline.js";
 import { registerMaintainerRoutes } from "./maintainer.js";
+import { registerPlanAgentRoutes } from "./planAgent.js";
 import type { ModelRouter } from "../ai/router.js";
 import {
   CreateDependencyInput,
@@ -312,6 +313,7 @@ export function createApp(
   registerIntelligenceRoutes(app, db);
   registerReplanRoutes(app, db);
   registerCorrectionRoutes(app, db);
+  registerPlanAgentRoutes(app, db, router);
 
   // ---- AI Maintainer and Ask Pit Crew --------------------------------------
 

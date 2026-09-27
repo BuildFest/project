@@ -38,7 +38,7 @@ flowchart LR
 | Backend | Node.js, TypeScript, Hono, Zod |
 | Database | PostgreSQL 15+ with SQL migrations |
 | GitHub integration | Signed webhooks plus REST API backfill |
-| Optional AI | Groq, OpenAI, OpenRouter, or Anthropic through a two-tier model router |
+| Optional AI | Groq, OpenAI, Microsoft Foundry agents, OpenRouter, or Anthropic through a two-tier model router |
 | Deployment | Railway configuration for the backend; any Next.js-compatible host for the frontend |
 
 ## Architecture
@@ -115,8 +115,30 @@ Backend configuration lives in `backend/.env`:
 | `CORS_ORIGIN` | Recommended | Allowed frontend origin; defaults to `http://localhost:3000` in the example file |
 | `AI_FAST_PROVIDER` / `AI_FAST_MODEL` | No | Provider and model for inexpensive inference jobs |
 | `AI_SMART_PROVIDER` / `AI_SMART_MODEL` | No | Provider and model for reasoning-heavy jobs |
-| `GROQ_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` | No | Credentials for enabled AI providers |
+| `GROQ_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` | No | Credentials for enabled model providers |
+| `AZURE_FOUNDRY_AGENT_ENDPOINT` | When using Foundry | Existing agent's OpenAI protocol endpoint from the Publish menu |
+| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | When using Foundry | Entra service principal used by the backend to invoke the agent |
 | `AI_DAILY_TOKEN_BUDGET` | No | Per-process daily token ceiling; `0` disables the cap |
+
+To use an existing Microsoft Foundry agent for every AI job, set both tiers to
+`foundry`. The model variables are labels used in audit records; the agent owns
+its actual model configuration:
+
+```dotenv
+AI_FAST_PROVIDER=foundry
+AI_FAST_MODEL=PitCrewer
+AI_SMART_PROVIDER=foundry
+AI_SMART_MODEL=PitCrewer
+AZURE_FOUNDRY_AGENT_ENDPOINT=https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT/agents/PitCrewer/endpoint/protocols/openai
+AZURE_TENANT_ID=your-tenant-id
+AZURE_CLIENT_ID=your-calling-application-client-id
+AZURE_CLIENT_SECRET=your-calling-application-secret
+```
+
+The backend invokes the agent's Responses endpoint with a Microsoft Entra token.
+The calling service principal needs the Foundry Agent Consumer role on the
+agent or project. The agent owns its model and reasoning settings; the backend
+supplies project context and preserves JSON validation and retry behavior.
 
 Frontend configuration lives in `frontend/.env.local`:
 

@@ -90,9 +90,11 @@ export function foundryAgentClient(
     model: label,
     async complete(request: CompletionRequest) {
       const token = await getToken();
+      // Each item needs an explicit type: "message" — Azure rejects it
+      // otherwise ("Invalid value: ''. Supported values are: ...").
       const input = [
-        ...(request.system ? [{ role: "developer", content: request.system }] : []),
-        ...request.messages,
+        ...(request.system ? [{ type: "message" as const, role: "developer" as const, content: request.system }] : []),
+        ...request.messages.map((m) => ({ type: "message" as const, ...m })),
       ];
       const data = (await postJson(
         fetchImpl,

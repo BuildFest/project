@@ -50,8 +50,8 @@ describe("foundryAgentClient", () => {
     expect(init.headers).toMatchObject({ authorization: "Bearer token" });
     expect(JSON.parse(init.body as string)).toEqual({
       input: [
-        { role: "developer", content: "Return JSON." },
-        { role: "user", content: "Plan this project" },
+        { type: "message", role: "developer", content: "Return JSON." },
+        { type: "message", role: "user", content: "Plan this project" },
       ],
       max_output_tokens: 2_000,
     });

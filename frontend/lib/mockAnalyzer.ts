@@ -43,6 +43,9 @@ function write(key: string, value: unknown) {
 
 const overridesFor = (pid: string) => read<Record<string, Record<string, OverrideRec>>>(OVERRIDES_KEY, {})[pid] ?? {};
 const dismissedFor = (pid: string) => new Set(read<Record<string, string[]>>(DISMISSED_KEY, {})[pid] ?? []);
+const LINK_REVIEWS_KEY = "pitcrew.mock.linkReviews.v1";
+type LinkReview = "confirmed" | "rejected";
+const reviewsFor = (pid: string) => read<Record<string, Record<string, LinkReview>>>(LINK_REVIEWS_KEY, {})[pid] ?? {};
 
 
 interface Analysis {
@@ -81,6 +84,36 @@ function analyze(w: ProjectWorkspace): Analysis {
         break;
       }
     }
+  }
+  // 1b. Stand-in for B's LLM linker: commits no task key explains get a
+  // suggested link to the author's own open task (or the first task).
+  // Reviews persist; >= 0.8 counts toward status before review (§5.1).
+  const reviews = reviewsFor(pid);
+  const keyed = new Set(links.map((l) => l.event_id));
+  const pending: Analysis["links"] = [];
+  for (const e of events) {
+    if (keyed.has(e.event_id) || e.event_type !== "commit") continue;
+    const author = w.members.find((m) => m.github_login && m.github_login.toLowerCase() === e.actor?.toLowerCase());
+    const own = author && tasks.find((t) => t.owner_member_id === author.member_id && t.plan_status !== "complete");
+    const t = own ?? tasks[0];
+    const review = reviews[`link_llm_${e.event_id}`];
+    if (!t || review === "rejected") continue;
+    const link: Analysis["links"][number] = {
+      link_id: `link_llm_${e.event_id}`,
+      project_id: pid,
+      event_id: e.event_id,
+      task_id: t.task_id,
+      method: "llm",
+      confidence: own ? 0.82 : 0.55,
+      status: review ?? "suggested",
+      is_primary: false,
+      reason: own
+        ? `${author!.display_name} owns ${t.task_key} and made this commit while it was open.`
+        : `No task key in the message; ${t.task_key} is the closest open task.`,
+      event: e,
+    };
+    if (review === "confirmed" || link.confidence >= 0.8) links.push(link);
+    if (!review) pending.push(link);
   }
   const eventsFor = (taskId: string) => links.filter((l) => l.task_id === taskId).map((l) => l.event);
 
@@ -267,7 +300,7 @@ function analyze(w: ProjectWorkspace): Analysis {
       tasks: derived,
       signals: signals.filter((s) => !dismissed.has(s.signal_id)),
       collisions: collisions.filter((c) => !dismissed.has(c.collision_id)),
-      pending_links: [],
+      pending_links: pending,
       open_replans: 0,
     },
     links,
@@ -334,6 +367,12 @@ export async function clearOverride(projectId: string, taskId: string): Promise<
   const all = read<Record<string, Record<string, OverrideRec>>>(OVERRIDES_KEY, {});
   if (all[projectId]) delete all[projectId][taskId];
   write(OVERRIDES_KEY, all);
+}
+
+export async function reviewLink(projectId: string, linkId: string, status: LinkReview): Promise<void> {
+  const all = read<Record<string, Record<string, LinkReview>>>(LINK_REVIEWS_KEY, {});
+  all[projectId] = { ...(all[projectId] ?? {}), [linkId]: status };
+  write(LINK_REVIEWS_KEY, all);
 }
 
 export async function dismiss(projectId: string, id: string): Promise<void> {

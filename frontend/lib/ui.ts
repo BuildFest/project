@@ -1,4 +1,4 @@
-import type { DerivedStatus, PlanStatus } from "./types";
+import type { DerivedStatus, PlanStatus, ProjectWorkspace } from "./types";
 
 // Small shared UI helpers.
 
@@ -80,6 +80,27 @@ export function planAsDerived(s: PlanStatus): DerivedStatus | null {
 // Reverse: what plan_status to write when the team accepts what Pit Crew saw.
 export function derivedAsPlan(s: DerivedStatus): PlanStatus {
   return s === "possibly_blocked" ? "blocked" : s;
+}
+
+// Timeline actors are a GitHub login on github_event items and a member_id
+// (mem_…) on everything the team or analyzers wrote. Show a display name
+// either way, falling back to @login.
+export function actorName(workspace: ProjectWorkspace, actor: string | null): string | null {
+  if (!actor) return null;
+  const m = workspace.members.find(
+    (x) => x.member_id === actor || x.github_login?.toLowerCase() === actor.toLowerCase()
+  );
+  return m?.display_name ?? (actor.startsWith("mem_") ? "A former member" : `@${actor}`);
+}
+
+// Feed day headers: "Today", "Yesterday", then "Fri, Sep 25".
+export function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === new Date().toDateString()) return "Today";
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
 export function timeAgo(iso: string | null): string {

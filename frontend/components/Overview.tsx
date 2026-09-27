@@ -8,6 +8,7 @@ import {
   dismissSignal,
   getState,
   overrideTaskStatus,
+  reviewLink,
   updateTask,
   usingMockApi,
 } from "@/lib/api";
@@ -46,6 +47,8 @@ import {
   IconStop,
 } from "./Icons";
 import EvidenceDrawer from "./EvidenceDrawer";
+import LinkReview from "./LinkReview";
+import MaintainerPanel from "./MaintainerPanel";
 import RepositoryPanel from "./repo/RepositoryPanel";
 import ReplanPanel from "./ReplanPanel";
 import StatusBadge from "./StatusBadge";
@@ -199,6 +202,24 @@ export default function Overview({
             </ul>
           )}
         </section>
+
+        <LinkReview workspace={workspace} links={state?.pending_links ?? []}
+          onReview={(l, status) => {
+            if (!member) return needMember();
+            const key = byId.get(l.task_id)?.task_key ?? "the task";
+            return act(
+              () =>
+                reviewLink(pid, l.link_id, status, member.member_id).catch((e) => {
+                  if (e instanceof ApiError && e.status === 404) throw new Error("Someone already reviewed that link.");
+                  throw e;
+                }),
+              status === "confirmed"
+                ? `Linked to ${key}. It now counts toward ${key}'s status.`
+                : `Rejected the link to ${key}.`
+            );
+          }} />
+
+        <MaintainerPanel workspace={workspace} state={state} onTask={setEvidenceFor} />
 
         <ReplanPanel workspace={workspace} memberId={member?.member_id ?? null}
           refreshKey={state?.computed_at ?? ""}

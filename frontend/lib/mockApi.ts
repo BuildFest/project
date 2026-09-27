@@ -265,7 +265,7 @@ function generateEvents(w: ProjectWorkspace): GithubEvent[] {
   const pid = w.project.project_id;
   const repo = "repo_MOCK";
   const logins = w.members.map((m) => m.github_login).filter((x): x is string => !!x);
-  const people = logins.length ? logins : ["rameez99", "divij404"];
+  const people = logins.length ? logins : ["ada-codes", "grace-h"];
   const tasks = w.tasks.filter((t) => !t.archived).slice(0, 4);
   const plan = tasks.length
     ? tasks.map((t) => ({ key: t.task_key, title: t.title }))
@@ -347,7 +347,15 @@ function generateEvents(w: ProjectWorkspace): GithubEvent[] {
     }
   });
 
-  // A commit that doesn't mention any task key → stays unlinked.
+  // Commits that don't mention any task key → only an AI-suggested link.
+  tick(10);
+  const s0 = sha();
+  const other = people[1 % people.length];
+  events.push({
+    ...base("commit", other, "main"),
+    commit: { sha: s0, message: "polish empty states", author: other, url: `https://github.com/example/repo/commit/${s0}` },
+    changed_files: ["frontend/app/globals.css"],
+  });
   tick(15);
   const s = sha();
   events.push({

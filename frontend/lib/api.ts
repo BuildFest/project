@@ -4,17 +4,22 @@
 // the real API described in docs/api-contract.md. Otherwise it falls back to the
 // in-browser mock in lib/mockApi.ts so the UI still works without a backend.
 
+import * as activity from "./mockActivity";
 import * as analyzer from "./mockAnalyzer";
 import * as mock from "./mockApi";
 import type {
   ApiErrorBody,
+  BranchState,
   ReplanSuggestion,
   ConnectRepositoryResult,
+  Decision,
   DeliveryRetryResult,
   Repository,
   DerivedStatus,
   DerivedTaskState,
+  MaintainerNote,
   ProjectState,
+  PrNote,
   TaskEvidence,
   GithubEvent,
   Milestone,
@@ -22,6 +27,7 @@ import type {
   ProjectWorkspace,
   Task,
   TaskDependency,
+  TimelineItem,
 } from "./types";
 
 export { wouldCreateCycle } from "./mockApi";
@@ -165,6 +171,35 @@ export async function listEvents(
   return http<Page<GithubEvent>>("GET", `/projects/${enc(projectId)}/events${qs ? `?${qs}` : ""}`);
 }
 
+// Active first, then merged, then deleted (contract §4.6). Not paginated.
+export async function listBranches(projectId: string): Promise<BranchState[]> {
+  if (usingMockApi) return activity.listBranches(projectId);
+  return http<BranchState[]>("GET", `/projects/${enc(projectId)}/branches`);
+}
+
+// ---- timeline and decisions (contract §6) ------------------------------------
+
+export async function listTimeline(
+  projectId: string,
+  opts: { limit?: number; cursor?: string | null; task_id?: string } = {}
+): Promise<Page<TimelineItem>> {
+  if (usingMockApi) return activity.listTimeline(projectId, opts);
+  const q = new URLSearchParams();
+  if (opts.limit) q.set("limit", String(opts.limit));
+  if (opts.cursor) q.set("cursor", opts.cursor);
+  if (opts.task_id) q.set("task_id", opts.task_id);
+  const qs = q.toString();
+  return http<Page<TimelineItem>>("GET", `/projects/${enc(projectId)}/timeline${qs ? `?${qs}` : ""}`);
+}
+
+export async function createDecision(
+  projectId: string,
+  input: { title: string; body?: string; member_id: string; related_task_ids?: string[] }
+): Promise<Decision> {
+  if (usingMockApi) return activity.createDecision(projectId, input);
+  return http<Decision>("POST", `/projects/${enc(projectId)}/decisions`, input);
+}
+
 // ---- project intelligence (contract §5) --------------------------------------
 
 
@@ -194,6 +229,18 @@ export async function clearTaskOverride(projectId: string, taskId: string): Prom
   await http<DerivedTaskState>("DELETE", `/projects/${enc(projectId)}/tasks/${enc(taskId)}/override`);
 }
 
+// Confirms or rejects a suggested event–task link (§5.5). 404 if someone
+// else already reviewed it.
+export async function reviewLink(
+  projectId: string,
+  linkId: string,
+  status: "confirmed" | "rejected",
+  memberId: string
+): Promise<void> {
+  if (usingMockApi) return analyzer.reviewLink(projectId, linkId, status);
+  await http("PATCH", `/projects/${enc(projectId)}/links/${enc(linkId)}`, { status, member_id: memberId });
+}
+
 export async function dismissSignal(projectId: string, signalId: string, memberId: string) {
   if (usingMockApi) return analyzer.dismiss(projectId, signalId);
   await http("PATCH", `/projects/${enc(projectId)}/signals/${enc(signalId)}`, {
@@ -208,6 +255,30 @@ export async function dismissCollision(projectId: string, collisionId: string, m
     status: "dismissed",
     member_id: memberId,
   });
+}
+
+// ---- maintainer and Ask Pit Crew (contract §5.0, §5.8) -----------------------
+// Notes only: none of these ever change the plan.
+
+export async function listMaintainerNotes(projectId: string): Promise<MaintainerNote[]> {
+  if (usingMockApi) return activity.listMaintainerNotes(projectId);
+  return http<MaintainerNote[]>("GET", `/projects/${enc(projectId)}/maintainer/notes`);
+}
+
+export async function generateDigest(projectId: string): Promise<MaintainerNote> {
+  if (usingMockApi) return activity.generateDigest(projectId);
+  return http<MaintainerNote>("POST", `/projects/${enc(projectId)}/maintainer/digest`);
+}
+
+// 429 when the per-project rate limit is hit; the error message says so.
+export async function askPitCrew(projectId: string, question: string): Promise<MaintainerNote> {
+  if (usingMockApi) return activity.askPitCrew(projectId, question);
+  return http<MaintainerNote>("POST", `/projects/${enc(projectId)}/ask`, { question: question.trim() });
+}
+
+export async function listPrNotes(projectId: string, limit = 50): Promise<PrNote[]> {
+  if (usingMockApi) return [];
+  return http<PrNote[]>("GET", `/projects/${enc(projectId)}/pr-notes?limit=${limit}`);
 }
 
 // ---- repositories (contract §4.1–4.3) ----------------------------------------

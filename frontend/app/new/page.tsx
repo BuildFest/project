@@ -149,12 +149,12 @@ export default function NewProjectPage() {
           </div>
           {members.map((m, i) => (
             <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-center gap-3 border-b border-line px-3 py-2 last:border-b-0">
-              <input className={`${inputCls} w-full`} placeholder="Rameez" value={m.display_name}
+              <input className={`${inputCls} w-full`} placeholder="Ada" value={m.display_name}
                 onChange={(e) => updateMember(i, { display_name: e.target.value })} />
               <div className="flex items-center rounded-md border border-line bg-bg focus-within:border-link">
                 <span className="pl-2.5 text-sm text-faint">@</span>
                 <input className="w-full bg-transparent px-1 py-1.5 text-sm text-text placeholder:text-faint focus:outline-none"
-                  placeholder="rameez99" value={m.github_login}
+                  placeholder="ada-codes" value={m.github_login}
                   onChange={(e) => updateMember(i, { github_login: e.target.value })} />
               </div>
               <button type="button" className="w-16 text-right text-xs text-muted hover:text-red disabled:invisible"

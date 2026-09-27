@@ -121,7 +121,7 @@ export default function EvidenceDrawer({
                   </p>
                 ) : (
                   <ul className="overflow-hidden rounded-md border border-line">
-                    {data.links.map(({ event: e, method, confidence }) => (
+                    {data.links.map(({ event: e, method, confidence, status }) => (
                       <li key={e.event_id} className="border-b border-line px-3 py-2 last:border-b-0">
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate text-text">{describe(e)}</span>
@@ -131,7 +131,7 @@ export default function EvidenceDrawer({
                           {e.actor && <>@{e.actor} · </>}
                           {e.branch && <span className="font-mono">{e.branch}</span>}
                           {" · "}
-                          {method === "task_key" ? "matched by task key" : method === "manual" ? "linked by a teammate" : `AI match, ${Math.round(confidence * 100)}%`}
+                          {method === "task_key" ? "matched by task key" : method === "manual" ? "linked by a teammate" : `AI match, ${Math.round(confidence * 100)}%${status === "suggested" ? " · unreviewed" : ""}`}
                         </div>
                       </li>
                     ))}

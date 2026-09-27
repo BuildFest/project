@@ -174,6 +174,7 @@ export interface EventTaskLink {
   confidence: number;
   status: "confirmed" | "suggested" | "rejected";
   is_primary: boolean;
+  reason?: string | null; // why the link was made (AI suggestions); contract §5.1
 }
 
 export interface DerivedTaskState {
@@ -317,11 +318,13 @@ export interface ApiErrorBody {
 // ============================================================================
 
 export interface ProjectState {
-  computed_at: string; // latest analyzer run
+  computed_at: string | null; // latest analyzer write; null if never analyzed
   tasks: DerivedTaskState[]; // one per analyzed, non-archived task
   signals: HealthSignal[]; // active only
   collisions: Collision[]; // active only
-  pending_links: EventTaskLink[]; // suggested, awaiting review
+  // Suggested links awaiting review, newest event first. Ones at >= 0.8
+  // confidence already count toward derived status (as AI-inferred).
+  pending_links: Array<EventTaskLink & { event: GithubEvent }>;
   open_replans: number;
 }
 

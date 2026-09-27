@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, listEvents, usingMockApi } from "@/lib/api";
 import { GithubEvent, ProjectWorkspace, Task } from "@/lib/types";
-import { boxCls, boxHeaderCls, boxTitleCls, ghostButtonCls, inputCls, pillCls, smallButtonCls } from "@/lib/ui";
+import {
+  boxCls,
+  boxHeaderCls,
+  boxTitleCls,
+  dayLabel,
+  ghostButtonCls,
+  inputCls,
+  pillCls,
+  smallButtonCls,
+  timeAgo,
+} from "@/lib/ui";
 
 // GitHub-style activity feed built from normalized github_events
 // (docs/api-contract.md §4.5). Newest first, grouped by day.
@@ -24,24 +34,6 @@ function matchesFilter(e: GithubEvent, f: Filter) {
   if (f === "commits") return e.event_type === "commit" || e.event_type === "push";
   if (f === "prs") return e.event_type.startsWith("pull_request");
   return e.event_type === "branch_created" || e.event_type === "branch_deleted";
-}
-
-function dayLabel(iso: string) {
-  const d = new Date(iso);
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-}
-
-function timeAgo(iso: string) {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
 }
 
 export default function ActivityTimeline({ workspace }: { workspace: ProjectWorkspace }) {
@@ -157,7 +149,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   return (
     <section className={boxCls}>
       <div className={boxHeaderCls}>
-        <h2 className={boxTitleCls}>Activity</h2>
+        <h2 className={boxTitleCls}>Commits & pull requests</h2>
         <div className="flex items-center gap-2">
           {usingMockApi && (
             <span className={pillCls}

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import ActivityTimeline from "@/components/ActivityTimeline";
+import ActivityTab from "@/components/ActivityTab";
 import BriefEditor from "@/components/BriefEditor";
 import ActingAs from "@/components/ActingAs";
 import MilestoneEditor from "@/components/MilestoneEditor";
@@ -118,7 +118,7 @@ export default function ProjectPage() {
             <PlanTable workspace={workspace} onChange={setWorkspace} />
           </>
         ) : tab === "activity" ? (
-          <ActivityTimeline workspace={workspace} />
+          <ActivityTab workspace={workspace} />
         ) : (
           <TeamTab workspace={workspace} onChange={setWorkspace} />
         )}

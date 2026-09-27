@@ -170,6 +170,19 @@ describe("GitHub events on the timeline", () => {
     } while (cursor);
     expect(seen).toEqual(all.map((i: any) => i.item_id));
   });
+
+  it("filters project history to GitHub activity on one branch", async () => {
+    const { projectId, githubId, memberId } = await setup();
+    await push(githubId, "feature/auth", sha("e"), [{ id: sha("e"), message: "auth work" }]);
+    await push(githubId, "feature/billing", sha("f"), [{ id: sha("f"), message: "billing work" }]);
+    await call("POST", `/projects/${projectId}/decisions`, { title: "Project-wide decision", member_id: memberId });
+
+    const { items } = await timeline(projectId, "?branch=feature%2Fauth");
+    expect(items.map((item: any) => item.title).sort()).toEqual([
+      "Pranshul-13 created branch feature/auth",
+      "Pranshul-13 pushed to feature/auth",
+    ]);
+  });
 });
 
 describe("decisions", () => {

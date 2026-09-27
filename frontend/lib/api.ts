@@ -13,6 +13,7 @@ import type {
   ReplanSuggestion,
   ConnectRepositoryResult,
   Decision,
+  EventTaskLink,
   DeliveryRetryResult,
   Repository,
   DerivedStatus,
@@ -181,15 +182,21 @@ export async function listBranches(projectId: string): Promise<BranchState[]> {
 
 export async function listTimeline(
   projectId: string,
-  opts: { limit?: number; cursor?: string | null; task_id?: string } = {}
+  opts: { limit?: number; cursor?: string | null; task_id?: string; branch?: string } = {}
 ): Promise<Page<TimelineItem>> {
   if (usingMockApi) return activity.listTimeline(projectId, opts);
   const q = new URLSearchParams();
   if (opts.limit) q.set("limit", String(opts.limit));
   if (opts.cursor) q.set("cursor", opts.cursor);
   if (opts.task_id) q.set("task_id", opts.task_id);
+  if (opts.branch) q.set("branch", opts.branch);
   const qs = q.toString();
   return http<Page<TimelineItem>>("GET", `/projects/${enc(projectId)}/timeline${qs ? `?${qs}` : ""}`);
+}
+
+export async function listDecisions(projectId: string): Promise<Decision[]> {
+  if (usingMockApi) return activity.listDecisions(projectId);
+  return http<Decision[]>("GET", `/projects/${enc(projectId)}/decisions`);
 }
 
 export async function createDecision(
@@ -198,6 +205,25 @@ export async function createDecision(
 ): Promise<Decision> {
   if (usingMockApi) return activity.createDecision(projectId, input);
   return http<Decision>("POST", `/projects/${enc(projectId)}/decisions`, input);
+}
+
+export async function createManualLink(
+  projectId: string,
+  input: { event_id: string; task_id: string; member_id: string }
+): Promise<EventTaskLink> {
+  if (usingMockApi) {
+    return {
+      link_id: `link_${Date.now()}`,
+      project_id: projectId,
+      event_id: input.event_id,
+      task_id: input.task_id,
+      method: "manual",
+      confidence: 1,
+      status: "confirmed",
+      is_primary: false,
+    };
+  }
+  return http<EventTaskLink>("POST", `/projects/${enc(projectId)}/links`, input);
 }
 
 // ---- project intelligence (contract §5) --------------------------------------

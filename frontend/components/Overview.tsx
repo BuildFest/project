@@ -48,7 +48,6 @@ import {
 } from "./Icons";
 import EvidenceDrawer from "./EvidenceDrawer";
 import LinkReview from "./LinkReview";
-import MaintainerPanel from "./MaintainerPanel";
 import RepositoryPanel from "./repo/RepositoryPanel";
 import ReplanPanel from "./ReplanPanel";
 import StatusBadge from "./StatusBadge";
@@ -218,8 +217,6 @@ export default function Overview({
                 : `Rejected the link to ${key}.`
             );
           }} />
-
-        <MaintainerPanel workspace={workspace} state={state} onTask={setEvidenceFor} />
 
         <ReplanPanel workspace={workspace} memberId={member?.member_id ?? null}
           refreshKey={state?.computed_at ?? ""}

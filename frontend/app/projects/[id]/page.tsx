@@ -68,7 +68,7 @@ export default function ProjectPage() {
   const TABS_UI: { key: Tab; label: string; icon: React.ReactNode; count?: number }[] = [
     { key: "overview", label: "Overview", icon: <IconPulse /> },
     { key: "plan", label: "Plan", icon: <IconChecklist />, count: active.length },
-    { key: "activity", label: "Activity", icon: <IconCommit /> },
+    { key: "activity", label: "Updates", icon: <IconCommit /> },
     { key: "team", label: "Team", icon: <IconPeople />, count: workspace.members.length },
   ];
 

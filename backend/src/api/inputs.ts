@@ -130,6 +130,7 @@ export const ListTimelineQuery = z.object({
   limit: z.coerce.number().int().min(1).optional(),
   cursor: z.string().min(1).optional(),
   task_id: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
 });
 
 export const CreateDecisionInput = z.object({

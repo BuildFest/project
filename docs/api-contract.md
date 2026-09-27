@@ -229,6 +229,35 @@ the initial plan is set up.
 The first save is `initial`, later ones `manual`. Each save also adds a
 `plan_change` timeline item ("Plan v2 saved").
 
+### 3.8 ✅ `POST /projects/:projectId/plan-agent/bootstrap`
+Creates the initial organized plan from a non-empty project brief. The planning
+agent generates milestones, tasks, ownership, scope, dates, and dependencies,
+persists them atomically as the next plan version, records a `plan_change`
+timeline item, and runs project analysis immediately. Usually this creates Plan
+v1; an already-saved empty baseline advances to the next version instead.
+
+```ts
+{ member_id: string | null }
+```
+
+→ `201 { summary, milestone_count, task_count, generated_by: "llm", plan_version: number, analysis, workspace }`
+· `409` missing brief or an existing plan · `503` no AI provider is enabled
+
+This endpoint is only for the first plan. Once a baseline exists, ongoing
+timeline and repository changes flow through analysis and reviewable replan
+suggestions instead of silently replacing team-authored work.
+
+### 3.9 ✅ `POST /projects/:projectId/plan-agent/run`
+Runs event linking, derived-state analysis, health checks, collision detection,
+and replan generation immediately. Normal operation also schedules this work
+after ingested events and during the background project sweep.
+
+```ts
+{ member_id: string | null }
+```
+
+→ `200 { analysis, workspace }`
+
 ---
 
 ## 4. Repository and events — owner A

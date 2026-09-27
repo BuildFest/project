@@ -328,6 +328,24 @@ export interface ProjectState {
   open_replans: number;
 }
 
+export interface PlanAgentResult {
+  summary?: string;
+  milestone_count?: number;
+  task_count?: number;
+  generated_by?: "llm";
+  plan_version?: number;
+  analysis?: {
+    states?: number;
+    signals?: number;
+    collisions?: number;
+    aiApplied?: boolean;
+    aiError?: string | null;
+    replan?: { created: boolean; suggestionId: string | null; generatedBy: "rules" | "llm" | null; reason: string } | null;
+    replanError?: string | null;
+  };
+  workspace: ProjectWorkspace;
+}
+
 export interface TaskEvidence {
   task: Task;
   state: DerivedTaskState | null;

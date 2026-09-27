@@ -4,12 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import ActivityTab from "@/components/ActivityTab";
-import BriefEditor from "@/components/BriefEditor";
 import ActingAs from "@/components/ActingAs";
-import MilestoneEditor from "@/components/MilestoneEditor";
 import Overview from "@/components/Overview";
-import PlanTable from "@/components/PlanTable";
-import PlanVersionBar from "@/components/PlanVersionBar";
+import PlanAgentWorkspace from "@/components/PlanAgentWorkspace";
 import TeamTab from "@/components/TeamTab";
 import { getProject } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
@@ -109,14 +106,7 @@ export default function ProjectPage() {
         {tab === "overview" ? (
           <Overview workspace={workspace} onWorkspaceChange={setWorkspace} />
         ) : tab === "plan" ? (
-          <>
-            <div className="grid gap-6 lg:grid-cols-2">
-              <BriefEditor workspace={workspace} onChange={setWorkspace} />
-              <MilestoneEditor workspace={workspace} onChange={setWorkspace} />
-            </div>
-            <PlanVersionBar workspace={workspace} onChange={setWorkspace} />
-            <PlanTable workspace={workspace} onChange={setWorkspace} />
-          </>
+          <PlanAgentWorkspace workspace={workspace} onChange={setWorkspace} />
         ) : tab === "activity" ? (
           <ActivityTab workspace={workspace} />
         ) : (

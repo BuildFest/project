@@ -23,6 +23,7 @@ import type {
   TaskEvidence,
   GithubEvent,
   Milestone,
+  PlanAgentResult,
   Page,
   ProjectWorkspace,
   Task,
@@ -206,6 +207,16 @@ export async function createDecision(
 export async function getState(projectId: string): Promise<ProjectState> {
   if (usingMockApi) return analyzer.getState(projectId);
   return http<ProjectState>("GET", `/projects/${enc(projectId)}/state`);
+}
+
+export async function bootstrapPlanFromBrief(projectId: string, memberId: string | null): Promise<PlanAgentResult> {
+  if (usingMockApi) return mock.bootstrapPlanFromBrief(projectId);
+  return http<PlanAgentResult>("POST", `/projects/${enc(projectId)}/plan-agent/bootstrap`, { member_id: memberId });
+}
+
+export async function runPlanningAgent(projectId: string, memberId: string | null): Promise<PlanAgentResult> {
+  if (usingMockApi) return { workspace: await mock.getProject(projectId) as ProjectWorkspace };
+  return http<PlanAgentResult>("POST", `/projects/${enc(projectId)}/plan-agent/run`, { member_id: memberId });
 }
 
 export async function getTaskEvidence(projectId: string, taskId: string): Promise<TaskEvidence> {

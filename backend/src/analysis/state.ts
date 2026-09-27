@@ -204,7 +204,18 @@ export function deriveTaskStates(input: DeriveTaskStatesInput): DerivedTaskState
     const task = taskById.get(taskId)!;
     const base = deriveBase(linkedByTask.get(taskId) ?? [], branchesByTask.get(taskId) ?? []);
     const dependencyIds = depsByTask.get(taskId) ?? [];
-    const blocking = dependencyIds.filter((id) => cyclic.has(id) || result.get(id)?.effective_status !== "complete");
+    // A prerequisite that is under way (in the repository or per the plan) is
+    // parallel work, not a blocker. Only one that hasn't started, or is itself
+    // blocked, holds the dependent back.
+    const blocks = (id: string) => {
+      if (cyclic.has(id)) return true;
+      const plan = taskById.get(id)!.plan_status;
+      const effective = result.get(id)?.effective_status;
+      if (effective === "complete" || plan === "complete") return false;
+      if (effective === "possibly_blocked") return true;
+      return effective === "not_started" && plan !== "in_progress";
+    };
+    const blocking = dependencyIds.filter(blocks);
     let computed: DerivedStatus = base.status;
     let confidence = base.confidence;
     let explanation = base.explanation;

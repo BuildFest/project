@@ -164,7 +164,6 @@ export default function Overview({
   const tasks = workspace.tasks.filter((t) => !t.archived && t.plan_status !== "cancelled");
   const stateOf = new Map((state?.tasks ?? []).map((d) => [d.task_id, d]));
   const byId = new Map(workspace.tasks.map((t) => [t.task_id, t]));
-  const eff = (t: Task) => stateOf.get(t.task_id)?.effective_status;
   const disagree = (t: Task) => {
     const d = stateOf.get(t.task_id);
     return !!d && planAsDerived(t.plan_status) !== d.effective_status;
@@ -298,7 +297,7 @@ export default function Overview({
         </section>
       </div>
 
-      <Sidebar workspace={workspace} eff={eff} tasks={tasks} />
+      <Sidebar workspace={workspace} tasks={tasks} />
 
       {evidenceFor && <EvidenceDrawer workspace={workspace} taskId={evidenceFor} onClose={closeDrawer} />}
     </div>
@@ -352,19 +351,12 @@ function RiskHistory({ risks, error, onRetry }: { risks: RiskHistoryItem[] | nul
 // ---------------------------------------------------------------------------
 // Right-hand "About" column, like a GitHub repository page.
 
-function Sidebar({
-  workspace,
-  tasks,
-  eff,
-}: {
-  workspace: ProjectWorkspace;
-  tasks: Task[];
-  eff: (t: Task) => DerivedStatus | undefined;
-}) {
+function Sidebar({ workspace, tasks }: { workspace: ProjectWorkspace; tasks: Task[] }) {
   const { project, brief, members, milestones } = workspace;
-  const done = tasks.filter((t) => eff(t) === "complete").length;
-  const inProgress = tasks.filter((t) => eff(t) === "in_progress").length;
-  const blocked = tasks.filter((t) => eff(t) === "possibly_blocked").length;
+  // The plan's own statuses (team- or agent-set); Plan vs. reality covers the repository's view.
+  const done = tasks.filter((t) => t.plan_status === "complete").length;
+  const inProgress = tasks.filter((t) => t.plan_status === "in_progress").length;
+  const blocked = tasks.filter((t) => t.plan_status === "blocked").length;
   const notStarted = tasks.length - done - inProgress - blocked;
   const pct = (n: number) => (tasks.length ? (n / tasks.length) * 100 : 0);
   // First real sentence of the brief (skip headings, list markers, code fences).
@@ -398,7 +390,7 @@ function Sidebar({
         <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
           <li><span className="mr-1 inline-block h-2 w-2 rounded-full bg-green" /> <span className="font-semibold text-header">{done}</span> complete</li>
           <li><span className="mr-1 inline-block h-2 w-2 rounded-full bg-blue" /> <span className="font-semibold text-header">{inProgress}</span> in progress</li>
-          {blocked > 0 && <li><span className="mr-1 inline-block h-2 w-2 rounded-full bg-yellow" /> <span className="font-semibold text-header">{blocked}</span> possibly blocked</li>}
+          {blocked > 0 && <li><span className="mr-1 inline-block h-2 w-2 rounded-full bg-yellow" /> <span className="font-semibold text-header">{blocked}</span> blocked</li>}
           <li><span className="mr-1 inline-block h-2 w-2 rounded-full bg-btn" /> <span className="font-semibold text-header">{notStarted}</span> not started</li>
         </ul>
       </section>
@@ -429,7 +421,7 @@ function Sidebar({
           <ul className="space-y-2">
             {milestones.filter((m) => !m.archived).map((m) => {
               const mt = tasks.filter((t) => t.milestone_id === m.milestone_id);
-              const md = mt.filter((t) => eff(t) === "complete").length;
+              const md = mt.filter((t) => t.plan_status === "complete").length;
               return (
                 <li key={m.milestone_id}>
                   <div className="flex items-center gap-2 text-header"><IconMilestone className="text-muted" /> {m.name}</div>

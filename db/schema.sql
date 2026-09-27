@@ -390,9 +390,11 @@ create index event_task_links_task_idx on event_task_links (task_id)
 
 -- Plan status changes the planning agent made on its own, with the evidence,
 -- so the team can see why and undo them. Undoing hands the status back to a person.
+-- Moves from one sync share batch_id, which the sync's single timeline item names.
 create table plan_status_moves (
   move_id            text primary key,
   project_id         text not null,
+  batch_id           text not null,
   task_id            text not null,
   from_status        text not null check (from_status in ('not_started', 'in_progress')),
   to_status          text not null check (to_status in ('in_progress', 'complete')),
@@ -407,6 +409,7 @@ create table plan_status_moves (
 );
 
 create index plan_status_moves_project_idx on plan_status_moves (project_id, created_at desc);
+create index plan_status_moves_batch_idx on plan_status_moves (batch_id);
 
 -- When the planning agent last synced each project's plan (it moves task
 -- statuses in batches every PLAN_SYNC_INTERVAL_HOURS, not on every event).

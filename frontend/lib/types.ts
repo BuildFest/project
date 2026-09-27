@@ -418,6 +418,7 @@ export interface PrNote {
 export interface StatusMove {
   move_id: string;
   project_id: string;
+  batch_id: string; // moves from one sync share it; the timeline item names the batch
   task_id: string;
   from_status: "not_started" | "in_progress";
   to_status: "in_progress" | "complete";

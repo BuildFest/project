@@ -276,14 +276,16 @@ statuses forward on its own, from strongly linked evidence:
 confirming) or an AI link with confidence ≥ 0.9. The agent never moves a task
 backwards, never touches `blocked`, `complete` or `cancelled`, skips tasks with
 a derived-state override, and skips any task whose `plan_status_set_by` is a
-person. Each move writes a `plan_status_moves` row and a `plan_change` timeline
-item (`entity_type: "plan_status_moves"`, `entity_id: move_id`), for example
-"Planning agent moved PC-6 to Complete". Health signals in the same run see the
-moved plan. Moves don't create plan versions.
+person. Each move writes a `plan_status_moves` row; the moves one sync makes
+share a `batch_id` and get a single `plan_change` timeline item
+(`entity_type: "plan_status_batches"`, `entity_id: batch_id`): "Planning agent
+moved PC-6 to Complete" for one move, otherwise "Planning agent updated 12
+tasks" with a summary like "In progress: PC-1, PC-2 · Complete: PC-6". Health
+signals in the same run see the moved plan. Moves don't create plan versions.
 
 ```ts
 interface StatusMove {
-  move_id: string; project_id: string; task_id: string;
+  move_id: string; project_id: string; batch_id: string; task_id: string;
   from_status: "not_started" | "in_progress";
   to_status: "in_progress" | "complete";
   reason: string;               // "PR #12 was merged"

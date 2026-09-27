@@ -3,7 +3,7 @@ import { newId } from "../ids.js";
 import type { AnalysisResult } from "./pipeline.js";
 import type { ProjectSnapshot } from "./load.js";
 import type { DetectedCollision } from "./collisions.js";
-import { AGENT_ACTOR, STATUS_LABEL, type StatusMove } from "./planSync.js";
+import { AGENT_ACTOR, batchTimelineText, type StatusMove } from "./planSync.js";
 
 export interface PersistResult { branches: number; states: number; signals: number; collisions: number; statusMoves: number }
 
@@ -15,25 +15,34 @@ async function timeline(tx: pg.PoolClient, projectId: string, kind: string, titl
 
 // Guarded on the status the decision was based on and on nobody having taken
 // the status over since, so a teammate's concurrent edit always wins.
-async function persistStatusMove(tx: pg.PoolClient, projectId: string, move: StatusMove): Promise<number> {
+async function persistStatusMove(tx: pg.PoolClient, projectId: string, batchId: string, move: StatusMove): Promise<boolean> {
   const updated = await tx.query(
     `update tasks set plan_status = $4, plan_status_set_by = $5
       where project_id = $1 and task_id = $2 and plan_status = $3 and not archived
         and (plan_status_set_by is null or plan_status_set_by = $5)`,
     [projectId, move.task_id, move.from, move.to, AGENT_ACTOR],
   );
-  if (!updated.rowCount) return 0;
-  const moveId = newId("mv");
+  if (!updated.rowCount) return false;
   await tx.query(
-    `insert into plan_status_moves (move_id, project_id, task_id, from_status, to_status, reason, evidence_event_ids)
-     values ($1, $2, $3, $4, $5, $6, $7)`,
-    [moveId, projectId, move.task_id, move.from, move.to, move.reason, move.evidence_event_ids],
+    `insert into plan_status_moves (move_id, project_id, batch_id, task_id, from_status, to_status, reason, evidence_event_ids)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [newId("mv"), projectId, batchId, move.task_id, move.from, move.to, move.reason, move.evidence_event_ids],
   );
+  return true;
+}
+
+// Saves a sync's moves and gives them one timeline entry between them.
+async function persistStatusMoves(tx: pg.PoolClient, projectId: string, moves: StatusMove[]): Promise<number> {
+  const batchId = newId("mb");
+  const saved: StatusMove[] = [];
+  for (const move of moves) if (await persistStatusMove(tx, projectId, batchId, move)) saved.push(move);
+  if (saved.length === 0) return 0;
+  const { title, summary } = batchTimelineText(saved);
   await tx.query(`insert into timeline_items
     (item_id, project_id, occurred_at, kind, title, summary, entity_type, entity_id, related_task_ids)
-    values ($1, $2, now(), 'plan_change', $3, $4, 'plan_status_moves', $5, $6)`,
-    [newId("tl"), projectId, `Planning agent moved ${move.task_key} to ${STATUS_LABEL[move.to]}`, move.reason, moveId, [move.task_id]]);
-  return 1;
+    values ($1, $2, now(), 'plan_change', $3, $4, 'plan_status_batches', $5, $6)`,
+    [newId("tl"), projectId, title, summary, batchId, saved.map((move) => move.task_id)]);
+  return saved.length;
 }
 
 async function databaseCollisionPair(tx: pg.PoolClient, collision: DetectedCollision): Promise<DetectedCollision> {
@@ -47,7 +56,7 @@ async function databaseCollisionPair(tx: pg.PoolClient, collision: DetectedColli
 
 export async function persistAnalysis(tx: pg.PoolClient, projectId: string, snapshot: ProjectSnapshot, result: AnalysisResult): Promise<PersistResult> {
   const counts: PersistResult = { branches: 0, states: 0, signals: 0, collisions: 0, statusMoves: 0 };
-  for (const move of result.statusMoves) counts.statusMoves += await persistStatusMove(tx, projectId, move);
+  counts.statusMoves = await persistStatusMoves(tx, projectId, result.statusMoves);
   if (result.planSyncedAt) {
     await tx.query(`insert into plan_sync_state (project_id, synced_at) values ($1, $2)
       on conflict (project_id) do update set synced_at = excluded.synced_at`, [projectId, result.planSyncedAt]);

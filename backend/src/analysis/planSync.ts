@@ -109,6 +109,21 @@ function isCycle(state: DerivedTaskState): boolean {
   return state.computed_status === "possibly_blocked" && (state.explanation ?? "").startsWith("Dependency cycle");
 }
 
+// One timeline entry per sync: "Planning agent moved PC-6 to Complete" for a
+// single move, otherwise "Planning agent updated 3 tasks" with the keys by status.
+export function batchTimelineText(moves: Pick<StatusMove, "task_key" | "to">[]): { title: string; summary: string } {
+  const byKey = (a: string, b: string) => a.length - b.length || a.localeCompare(b);
+  const keys = (to: MoveTarget) => moves.filter((move) => move.to === to).map((move) => move.task_key).sort(byKey);
+  const summary = (["in_progress", "complete"] as const)
+    .filter((to) => keys(to).length > 0)
+    .map((to) => `${STATUS_LABEL[to]}: ${keys(to).join(", ")}`)
+    .join(" · ");
+  const title = moves.length === 1
+    ? `Planning agent moved ${moves[0].task_key} to ${STATUS_LABEL[moves[0].to]}`
+    : `Planning agent updated ${moves.length} tasks`;
+  return { title, summary };
+}
+
 // Tasks as they will be once the moves are saved, for signals derived in the same run.
 export function applyStatusMoves(tasks: Task[], moves: StatusMove[]): Task[] {
   if (moves.length === 0) return tasks;

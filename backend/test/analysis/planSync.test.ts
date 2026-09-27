@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_ACTOR, applyStatusMoves, decideStatusMoves } from "../../src/analysis/planSync.js";
+import { AGENT_ACTOR, applyStatusMoves, batchTimelineText, decideStatusMoves } from "../../src/analysis/planSync.js";
 import type { DerivedTaskState, EventTaskLink } from "../../src/analysis/types.js";
 import { event, hoursAfter, T0, task } from "./fixtures.js";
 
@@ -135,5 +135,16 @@ describe("applyStatusMoves", () => {
     }]);
     expect(moved.map((t) => [t.plan_status, t.plan_status_set_by ?? null])).toEqual([["complete", AGENT_ACTOR], ["not_started", null]]);
     expect(tasks[0].plan_status).toBe("not_started");
+  });
+});
+
+describe("batchTimelineText", () => {
+  it("names a single move and summarizes several by status in task-key order", () => {
+    expect(batchTimelineText([{ task_key: "PC-6", to: "complete" }])).toEqual({
+      title: "Planning agent moved PC-6 to Complete", summary: "Complete: PC-6",
+    });
+    expect(batchTimelineText([
+      { task_key: "PC-12", to: "in_progress" }, { task_key: "PC-6", to: "complete" }, { task_key: "PC-2", to: "in_progress" },
+    ])).toEqual({ title: "Planning agent updated 3 tasks", summary: "In progress: PC-2, PC-12 · Complete: PC-6" });
   });
 });

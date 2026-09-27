@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useActingMember } from "@/lib/actingAs";
 import { bootstrapPlanFromBrief, getState, runPlanningAgent, usingMockApi } from "@/lib/api";
 import type { DerivedStatus, ProjectState, ProjectWorkspace, Task } from "@/lib/types";
-import { boxCls, buttonCls, formatDate, pillCls, timeAgo } from "@/lib/ui";
+import { boxCls, buttonCls, formatDate, pillCls, planAsDerived, timeAgo } from "@/lib/ui";
 import BriefEditor from "./BriefEditor";
 import MilestoneEditor from "./MilestoneEditor";
 import PlanTable from "./PlanTable";
@@ -217,7 +217,7 @@ function Roadmap({ workspace, state }: { workspace: ProjectWorkspace; state: Pro
       <div className="grid gap-4 xl:grid-cols-3">
         {groups.map((group, groupIndex) => {
           const items = tasks.filter((task) => group.id === "unassigned" ? !task.milestone_id : task.milestone_id === group.id);
-          const complete = items.filter((task) => (stateByTask.get(task.task_id)?.effective_status ?? task.plan_status) === "complete").length;
+          const complete = items.filter((task) => task.plan_status === "complete").length;
           const pct = items.length ? Math.round((complete / items.length) * 100) : 0;
           return (
             <article key={group.id} className={`${boxCls} min-w-0 overflow-hidden`}>
@@ -246,7 +246,9 @@ function Roadmap({ workspace, state }: { workspace: ProjectWorkspace; state: Pro
   );
 }
 
+// The plan's status leads; the repository's view shows only where it differs.
 function RoadmapTask({ task, effective, dependencies }: { task: Task; effective?: DerivedStatus; dependencies: number }) {
+  const differs = effective !== undefined && planAsDerived(task.plan_status) !== null && planAsDerived(task.plan_status) !== effective;
   return (
     <div className="rounded-md border border-line bg-bg px-3 py-3 transition-colors hover:border-line-strong hover:bg-raised/50">
       <div className="flex items-start justify-between gap-2">
@@ -254,9 +256,13 @@ function RoadmapTask({ task, effective, dependencies }: { task: Task; effective?
           <div className="font-mono text-[10px] text-link">{task.task_key}</div>
           <div className="mt-0.5 font-medium text-header">{task.title}</div>
         </div>
-        <StatusBadge status={effective ?? task.plan_status} />
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <StatusBadge status={task.plan_status} />
+          {task.plan_status_set_by === "agent" && <span className="text-[10px] text-faint">set by agent</span>}
+        </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
+        {differs && <span className={effective === "possibly_blocked" ? "text-yellow" : "text-link"}>Repo: {effective.replace(/_/g, " ")}</span>}
         <span>{task.priority} priority</span>
         <span>{task.scope === "must_have" ? "must-have" : "optional"}</span>
         {dependencies > 0 && <span>{dependencies} dependenc{dependencies === 1 ? "y" : "ies"}</span>}

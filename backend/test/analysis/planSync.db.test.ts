@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runAnalysis } from "../../src/analysis/runner.js";
@@ -105,14 +106,20 @@ describe("planning agent plan sync", () => {
       { task_id: s.t1, from_status: "not_started", to_status: "in_progress" },
       { task_id: s.t2, from_status: "not_started", to_status: "complete", reason: "PR #12 was merged", evidence_event_ids: [`e_m2_${n}`] },
     ]);
+    // One timeline entry for the whole sync, naming the batch its moves share.
     const { rows: timeline } = await pool.query(
-      "select title from timeline_items where project_id = $1 and entity_type = 'plan_status_moves' order by title",
+      "select title, summary, entity_type, entity_id, related_task_ids from timeline_items where project_id = $1 and kind = 'plan_change'",
       [s.project],
     );
-    expect(timeline.map((row) => row.title)).toEqual([
-      "Planning agent moved PC-1 to In progress",
-      "Planning agent moved PC-2 to Complete",
-    ]);
+    const { rows: batches } = await pool.query("select distinct batch_id from plan_status_moves where project_id = $1", [s.project]);
+    expect(batches).toHaveLength(1);
+    expect(timeline).toEqual([{
+      title: "Planning agent updated 2 tasks",
+      summary: "In progress: PC-1 · Complete: PC-2",
+      entity_type: "plan_status_batches",
+      entity_id: batches[0].batch_id,
+      related_task_ids: [s.t1, s.t2],
+    }]);
 
     // Signals see the moved plan: only the person-owned PC-3 still disagrees.
     const { rows: signals } = await pool.query(
@@ -192,5 +199,38 @@ describe("planning agent plan sync", () => {
     const fresh = await call("POST", `/projects/${s.project}/tasks`, { title: "Fresh", plan_status: "not_started" });
     expect(started.body.plan_status_set_by).toBe("team");
     expect(fresh.body.plan_status_set_by).toBeNull();
+  });
+
+  it("folds per-move timeline entries from before batching into one per sync", async () => {
+    const s = await seed();
+    const created = "2026-09-27T09:00:00Z";
+    await pool.query("alter table plan_status_moves alter column batch_id drop not null");
+    try {
+      for (const [move, task, to] of [["mv_a", s.t1, "in_progress"], ["mv_b", s.t2, "complete"]]) {
+        await pool.query(
+          `insert into plan_status_moves (move_id, project_id, task_id, from_status, to_status, reason, created_at)
+           values ($1, $2, $3, 'not_started', $4, 'r', $5)`,
+          [`${move}_${n}`, s.project, task, to, created],
+        );
+        await pool.query(
+          `insert into timeline_items (item_id, project_id, occurred_at, kind, title, entity_type, entity_id)
+           values ($1, $2, $3, 'plan_change', 'old', 'plan_status_moves', $4)`,
+          [`tl_${move}_${n}`, s.project, created, `${move}_${n}`],
+        );
+      }
+      await pool.query(readFileSync(new URL("../../../db/migrations/20260927150000_status_move_batches.sql", import.meta.url), "utf8"));
+    } finally {
+      await pool.query("alter table plan_status_moves alter column batch_id set not null");
+    }
+    const { rows } = await pool.query(
+      "select title, summary, entity_type, entity_id from timeline_items where project_id = $1 and kind = 'plan_change'",
+      [s.project],
+    );
+    expect(rows).toEqual([{
+      title: "Planning agent updated 2 tasks",
+      summary: "In progress: PC-1 · Complete: PC-2",
+      entity_type: "plan_status_batches",
+      entity_id: `mb_mv_a_${n}`,
+    }]);
   });
 });

@@ -8,6 +8,19 @@ type Row = pg.QueryResultRow;
 // Matches ProjectState in docs/api-contract.md §5.1.
 export interface ProjectState {
   computed_at: Date | null;
+  agent: {
+    status: "waiting" | "running" | "healthy" | "degraded" | "failed";
+    last_trigger: string | null;
+    last_mode: "full" | "rules" | null;
+    ai_available: boolean;
+    last_started_at: Date | null;
+    last_completed_at: Date | null;
+    last_succeeded_at: Date | null;
+    last_failed_at: Date | null;
+    last_error: string | null;
+    last_result: Record<string, unknown> | null;
+    runs_count: number;
+  };
   tasks: Row[];
   signals: Row[];
   collisions: Row[];
@@ -135,9 +148,28 @@ export async function loadProjectState(db: Queryable, projectId: string): Promis
     "select max(computed_at) as computed_at from derived_task_states where project_id = $1",
     [projectId],
   );
+  const agent = await db.query(
+    `select status, last_trigger, last_mode, ai_available, last_started_at, last_completed_at,
+            last_succeeded_at, last_failed_at, last_error, last_result, runs_count
+       from planning_agent_status where project_id = $1`,
+    [projectId],
+  );
 
   return {
     computed_at: computed.rows[0].computed_at,
+    agent: agent.rows[0] ?? {
+      status: "waiting",
+      last_trigger: null,
+      last_mode: null,
+      ai_available: false,
+      last_started_at: null,
+      last_completed_at: null,
+      last_succeeded_at: null,
+      last_failed_at: null,
+      last_error: null,
+      last_result: null,
+      runs_count: 0,
+    },
     tasks: tasks.rows,
     signals: signals.rows,
     collisions: collisions.rows,

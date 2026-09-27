@@ -343,6 +343,19 @@ export interface ApiErrorBody {
 
 export interface ProjectState {
   computed_at: string | null; // latest analyzer write; null if never analyzed
+  agent: {
+    status: "waiting" | "running" | "healthy" | "degraded" | "failed";
+    last_trigger: string | null;
+    last_mode: "full" | "rules" | null;
+    ai_available: boolean;
+    last_started_at: string | null;
+    last_completed_at: string | null;
+    last_succeeded_at: string | null;
+    last_failed_at: string | null;
+    last_error: string | null;
+    last_result: Record<string, unknown> | null;
+    runs_count: number;
+  };
   tasks: DerivedTaskState[]; // one per analyzed, non-archived task
   signals: HealthSignal[]; // active only
   collisions: Collision[]; // active only
@@ -364,6 +377,7 @@ export interface PlanAgentResult {
     collisions?: number;
     aiApplied?: boolean;
     aiError?: string | null;
+    linking?: { aiError: string | null } | null;
     replan?: { created: boolean; suggestionId: string | null; generatedBy: "rules" | "llm" | null; reason: string } | null;
     replanError?: string | null;
   };

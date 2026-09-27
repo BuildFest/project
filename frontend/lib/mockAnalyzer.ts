@@ -297,6 +297,19 @@ function analyze(w: ProjectWorkspace): Analysis {
   return {
     state: {
       computed_at: nowIso,
+      agent: {
+        status: "healthy",
+        last_trigger: "periodic",
+        last_mode: "rules",
+        ai_available: true,
+        last_started_at: nowIso,
+        last_completed_at: nowIso,
+        last_succeeded_at: nowIso,
+        last_failed_at: null,
+        last_error: null,
+        last_result: null,
+        runs_count: 1,
+      },
       tasks: derived,
       signals: signals.filter((s) => !dismissed.has(s.signal_id)),
       collisions: collisions.filter((c) => !dismissed.has(c.collision_id)),

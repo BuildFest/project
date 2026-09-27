@@ -76,12 +76,15 @@ const AiReplan = z
     signal_ids: z.array(z.string().min(1)).min(1),
     changes: z.array(ReplanChange).min(1).max(5),
   })
-  .strict();
+  .strict()
+  .nullable();
 
 interface ReplanTask {
   task_id: string;
   task_key: string;
   title: string;
+  description: string | null;
+  owner_member_id: string | null;
   priority: string;
   scope: string;
   plan_status: string;
@@ -94,6 +97,7 @@ interface ReplanTask {
 interface ReplanMilestone {
   milestone_id: string;
   name: string;
+  description: string | null;
   target_at: Date | null;
   sort_order: number;
   archived: boolean;
@@ -112,6 +116,15 @@ interface ReplanSignal {
   evidence_event_ids: string[];
 }
 
+interface ReplanIntentUpdate {
+  source_id: string;
+  type: "brief" | "decision";
+  summary: string;
+  body: string | null;
+  related_task_ids: string[];
+  occurred_at: Date;
+}
+
 export interface ReplanContext {
   projectId: string;
   planVersion: number;
@@ -122,6 +135,8 @@ export interface ReplanContext {
   dependencies: ReplanDependency[];
   states: ReplanState[];
   signals: ReplanSignal[];
+  intentUpdates: ReplanIntentUpdate[];
+  sourceIds: string[];
 }
 
 export interface ReplanDraft {
@@ -137,6 +152,7 @@ export interface ReplanGenerationResult {
   suggestionId: string | null;
   generatedBy: "rules" | "llm" | null;
   reason: "created" | "no_plan" | "no_signals" | "already_open" | "already_handled" | "no_changes";
+  aiError?: string | null;
 }
 
 function sameSet(left: string[], right: string[]): boolean {
@@ -267,19 +283,25 @@ async function buildAiReplan(
   router: ModelRouter,
   context: ReplanContext,
   rules: ReplanDraft | null,
-): Promise<ReplanDraft | null> {
-  if (!router.available("replan")) return null;
-  const allowedSignals = new Set(context.signals.map((signal) => signal.signal_id));
+): Promise<{ draft: ReplanDraft | null; error: string | null }> {
+  if (!router.available("replan")) return { draft: null, error: "no model configured for replan" };
+  const allowedSignals = new Set(context.sourceIds);
   try {
     const reply = await runJson(
       router,
       "replan",
       {
-        system: "Propose a small, evidence-grounded project replan. Never apply it. Use only the supplied closed operation set, make at most 5 changes, and cite real signal IDs in the rationale.",
+        system: "Propose a small, evidence-grounded project replan. Never apply it. Use only the supplied closed operation set, make at most 5 changes, and cite real source IDs in the rationale. Treat the latest brief and explicit team decisions as intent; treat repository-derived health signals as implementation evidence. Return JSON null when the current plan already covers the updates.",
         messages: [{ role: "user", content: JSON.stringify({
           plan_version: context.planVersion,
-          plan: context.planSnapshot,
-          signals: context.signals,
+          saved_plan: context.planSnapshot,
+          current_plan: {
+            tasks: context.tasks,
+            milestones: context.milestones,
+            dependencies: context.dependencies,
+          },
+          health_signals: context.signals,
+          intent_updates: context.intentUpdates,
           rules_proposal: rules,
         }) }],
         maxTokens: 1800,
@@ -288,19 +310,25 @@ async function buildAiReplan(
       AiReplan,
       { cacheKey: `replan:${context.projectId}:${context.planVersion}:${[...allowedSignals].sort().join(",")}` },
     );
+    if (!reply) return { draft: null, error: null };
     const cited = [...new Set(reply.signal_ids)];
-    if (cited.some((id) => !allowedSignals.has(id)) || cited.some((id) => !reply.rationale.includes(id))) return null;
+    if (cited.some((id) => !allowedSignals.has(id)) || cited.some((id) => !reply.rationale.includes(id))) {
+      return { draft: null, error: "AI replan cited unsupported sources" };
+    }
     const changes = validateReplanChanges(context, reply.changes);
-    if (changes.length === 0) return null;
+    if (changes.length === 0) return { draft: null, error: "AI replan contained no valid changes" };
     return {
-      rationale: reply.rationale,
-      changes,
-      generatedBy: "llm",
-      relatedSignalIds: context.signals.map((signal) => signal.signal_id).sort(),
-      evidenceEventIds: [...new Set(context.signals.flatMap((signal) => signal.evidence_event_ids))].sort(),
+      draft: {
+        rationale: reply.rationale,
+        changes,
+        generatedBy: "llm",
+        relatedSignalIds: cited.sort(),
+        evidenceEventIds: [...new Set(context.signals.flatMap((signal) => signal.evidence_event_ids))].sort(),
+      },
+      error: null,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    return { draft: null, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -311,19 +339,47 @@ async function loadContext(db: Queryable, projectId: string): Promise<ReplanCont
   );
   const planVersion = project.rows[0]?.current_plan_version;
   if (planVersion === null || planVersion === undefined) return null;
-  const [plan, members, tasks, milestones, dependencies, states, signals] = await Promise.all([
-    db.query<{ snapshot: unknown }>("select snapshot from plan_versions where project_id=$1 and version=$2", [projectId, planVersion]),
+  const [plan, members, tasks, milestones, dependencies, states, signals, brief, decisions] = await Promise.all([
+    db.query<{ snapshot: unknown; created_at: Date }>("select snapshot,created_at from plan_versions where project_id=$1 and version=$2", [projectId, planVersion]),
     db.query<{ member_id: string }>("select member_id from project_members where project_id=$1", [projectId]),
-    db.query<ReplanTask>(`select task_id,task_key,title,priority,scope,plan_status,milestone_id,target_at,sort_order,archived
+    db.query<ReplanTask>(`select task_id,task_key,title,description,owner_member_id,priority,scope,plan_status,milestone_id,target_at,sort_order,archived
       from tasks where project_id=$1 order by sort_order,task_id`, [projectId]),
-    db.query<ReplanMilestone>(`select milestone_id,name,target_at,sort_order,archived from milestones
+    db.query<ReplanMilestone>(`select milestone_id,name,description,target_at,sort_order,archived from milestones
       where project_id=$1 order by sort_order,milestone_id`, [projectId]),
     db.query<ReplanDependency>("select task_id,depends_on_task_id from task_dependencies where project_id=$1", [projectId]),
     db.query<ReplanState>("select task_id,effective_status,blocking_task_ids from derived_task_states where project_id=$1", [projectId]),
     db.query<ReplanSignal>(`select signal_id,type,severity,title,explanation,related_task_ids,related_milestone_ids,evidence_event_ids
       from health_signals where project_id=$1 and status='active'
         and type in ('milestone_slipping','dependency_incomplete') order by signal_id`, [projectId]),
+    db.query<{ content: string; updated_at: Date }>("select content,updated_at from project_briefs where project_id=$1", [projectId]),
+    db.query<{ decision_id: string; title: string; body: string | null; related_task_ids: string[]; decided_at: Date }>(
+      "select decision_id,title,body,related_task_ids,decided_at from decisions where project_id=$1 order by decided_at,decision_id",
+      [projectId],
+    ),
   ]);
+  const planCreatedAt = plan.rows[0]?.created_at ?? new Date(0);
+  const intentUpdates: ReplanIntentUpdate[] = [];
+  if (brief.rows[0] && brief.rows[0].updated_at > planCreatedAt) {
+    intentUpdates.push({
+      source_id: `brief:${brief.rows[0].updated_at.toISOString()}`,
+      type: "brief",
+      summary: "Project brief updated",
+      body: brief.rows[0].content,
+      related_task_ids: [],
+      occurred_at: brief.rows[0].updated_at,
+    });
+  }
+  for (const decision of decisions.rows.filter((item) => item.decided_at > planCreatedAt)) {
+    intentUpdates.push({
+      source_id: decision.decision_id,
+      type: "decision",
+      summary: decision.title,
+      body: decision.body,
+      related_task_ids: decision.related_task_ids,
+      occurred_at: decision.decided_at,
+    });
+  }
+  const sourceIds = [...signals.rows.map((signal) => signal.signal_id), ...intentUpdates.map((item) => item.source_id)].sort();
   return {
     projectId,
     planVersion,
@@ -334,6 +390,8 @@ async function loadContext(db: Queryable, projectId: string): Promise<ReplanCont
     dependencies: dependencies.rows,
     states: states.rows,
     signals: signals.rows,
+    intentUpdates,
+    sourceIds,
   };
 }
 
@@ -349,14 +407,14 @@ export async function maybeGenerateReplan(
     "update replan_suggestions set status='superseded' where project_id=$1 and status='proposed' and based_on_plan_version<>$2",
     [projectId, context.planVersion],
   );
-  if (context.signals.length === 0) return { created: false, suggestionId: null, generatedBy: null, reason: "no_signals" };
+  if (context.sourceIds.length === 0) return { created: false, suggestionId: null, generatedBy: null, reason: "no_signals" };
   const proposed = await db.query(
     "select 1 from replan_suggestions where project_id=$1 and status='proposed' and based_on_plan_version=$2 limit 1",
     [projectId, context.planVersion],
   );
   if (proposed.rowCount) return { created: false, suggestionId: null, generatedBy: null, reason: "already_open" };
 
-  const signalIds = context.signals.map((signal) => signal.signal_id).sort();
+  const signalIds = context.sourceIds;
   const handled = await db.query<{ related_signal_ids: string[] }>(
     "select related_signal_ids from replan_suggestions where project_id=$1 and based_on_plan_version=$2",
     [projectId, context.planVersion],
@@ -366,9 +424,10 @@ export async function maybeGenerateReplan(
   }
 
   const rules = buildRuleReplan(context);
-  const ai = router ? await buildAiReplan(router, context, rules) : null;
+  const aiAttempt = router ? await buildAiReplan(router, context, rules) : { draft: null, error: null };
+  const ai = aiAttempt.draft;
   const draft = ai ?? rules;
-  if (!draft) return { created: false, suggestionId: null, generatedBy: null, reason: "no_changes" };
+  if (!draft) return { created: false, suggestionId: null, generatedBy: null, reason: "no_changes", aiError: aiAttempt.error };
 
   return withTransaction(db, async (tx) => {
     const locked = await tx.query<{ current_plan_version: number | null }>(
@@ -393,7 +452,10 @@ export async function maybeGenerateReplan(
       (item_id,project_id,occurred_at,kind,title,summary,entity_type,entity_id,related_task_ids)
       values ($1,$2,now(),'replan_proposed','Replan proposed',$3,'replan_suggestions',$4,$5)`,
       [newId("tl"), projectId, draft.rationale, suggestionId,
-       [...new Set(context.signals.flatMap((signal) => signal.related_task_ids))]]);
-    return { created: true, suggestionId, generatedBy: draft.generatedBy, reason: "created" };
+       [...new Set([
+         ...context.signals.flatMap((signal) => signal.related_task_ids),
+         ...context.intentUpdates.flatMap((item) => item.related_task_ids),
+       ])]]);
+    return { created: true, suggestionId, generatedBy: draft.generatedBy, reason: "created", aiError: aiAttempt.error };
   });
 }

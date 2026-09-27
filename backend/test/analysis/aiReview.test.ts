@@ -161,6 +161,19 @@ describe("reviewAnalysis", () => {
     expect(result.error).toContain("invented evidence");
   });
 
+  it("repairs a schema-valid review that invented an evidence ID", async () => {
+    const inventedEvidence = answer();
+    inventedEvidence.tasks[0].evidence_event_ids = ["made_up"];
+    const router = routerWith(inventedEvidence, answer());
+
+    const result = await reviewAnalysis(router, base);
+
+    expect(router.requests).toHaveLength(2);
+    expect(router.requests[1].request.messages[2].content).toContain("invented evidence");
+    expect(result).toMatchObject({ applied: true, error: null });
+    expect(result.states[0].evidence_event_ids).toEqual(["event_a"]);
+  });
+
   it("requires grounded evidence citations when facts provide them", async () => {
     const missingTaskEvidence = answer();
     missingTaskEvidence.tasks[0].evidence_event_ids = [];

@@ -141,7 +141,7 @@ async function applyChange(
   }
 }
 
-export function registerReplanRoutes(app: Hono, db: Db) {
+export function registerReplanRoutes(app: Hono, db: Db, onPlanChanged?: (projectId: string) => void) {
   app.get("/projects/:projectId/replans", async (c) => {
     const projectId = c.req.param("projectId");
     const status = c.req.query("status");
@@ -263,6 +263,7 @@ export function registerReplanRoutes(app: Hono, db: Db) {
 
       return { suggestion: accepted, plan_version: version };
     });
+    onPlanChanged?.(projectId);
     return c.json(result);
   });
 }

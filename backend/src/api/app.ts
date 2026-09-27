@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withTransaction, type Db, type Queryable } from "../db.js";
 import { newId } from "../ids.js";
 import type { BranchRef } from "../ingestion/compare.js";
+import type { AnalysisTrigger } from "../analysis/runner.js";
 import { aiErrorToHttp, pgErrorToHttp } from "./errors.js";
 import { registerAiRunRoutes } from "./aiRuns.js";
 import { logInternalError, registerFailureRoutes } from "./failures.js";
@@ -82,11 +83,12 @@ export function corsOrigins(value = process.env.CORS_ORIGIN): string[] {
 
 export function createApp(
   db: Db,
-  onEventsIngested?: (projectIds: string[]) => void,
+  onProjectsChanged?: (projectIds: string[], trigger?: AnalysisTrigger) => void,
   onBranchesPushed?: (refs: BranchRef[]) => void,
   router: ModelRouter | null = null,
 ) {
   const app = new Hono();
+  const changed = (projectId: string, trigger: AnalysisTrigger) => onProjectsChanged?.([projectId], trigger);
 
   app.use("*", cors({ origin: corsOrigins() }));
 
@@ -155,7 +157,9 @@ export function createApp(
   app.patch("/projects/:projectId", async (c) => {
     const patch = await parseBody(c, UpdateProjectInput);
     const id = c.req.param("projectId");
-    return c.json((await updateRow(db, "projects", "project_id", id, id, patch)) ?? notFound("project"));
+    const project = (await updateRow(db, "projects", "project_id", id, id, patch)) ?? notFound("project");
+    changed(id, "project");
+    return c.json(project);
   });
 
   app.put("/projects/:projectId/brief", async (c) => {
@@ -165,7 +169,9 @@ export function createApp(
         where project_id = $1 returning *`,
       [c.req.param("projectId"), input.content, input.content_format, input.updated_by],
     );
-    return c.json(rows[0] ?? notFound("project"));
+    const brief = rows[0] ?? notFound("project");
+    changed(c.req.param("projectId"), "brief");
+    return c.json(brief);
   });
 
   // ---- members -------------------------------------------------------------
@@ -181,13 +187,16 @@ export function createApp(
        values ($1, $2, $3, $4, $5, $6) returning *`,
       [newId("mem"), projectId, input.display_name, input.github_login, input.role_label ?? null, input.access_level],
     );
+    changed(projectId, "member");
     return c.json(rows[0], 201);
   });
 
   app.patch("/projects/:projectId/members/:memberId", async (c) => {
     const patch = await parseBody(c, UpdateMemberInput);
     const row = await updateRow(db, "project_members", "member_id", c.req.param("projectId"), c.req.param("memberId"), patch);
-    return c.json(row ?? notFound("member"));
+    const member = row ?? notFound("member");
+    changed(c.req.param("projectId"), "member");
+    return c.json(member);
   });
 
   // Hard delete. Foreign keys unassign their tasks (owner_member_id) and clear
@@ -198,7 +207,9 @@ export function createApp(
       c.req.param("projectId"),
       c.req.param("memberId"),
     ]);
-    return rowCount ? c.body(null, 204) : notFound("member");
+    if (!rowCount) notFound("member");
+    changed(c.req.param("projectId"), "member");
+    return c.body(null, 204);
   });
 
   // ---- milestones ----------------------------------------------------------
@@ -210,13 +221,16 @@ export function createApp(
        values ($1, $2, $3, $4, $5, coalesce($6, 0)) returning *`,
       [newId("ms"), c.req.param("projectId"), input.name, input.description ?? null, input.target_at ?? null, input.sort_order ?? null],
     );
+    changed(c.req.param("projectId"), "plan");
     return c.json(rows[0], 201);
   });
 
   app.patch("/projects/:projectId/milestones/:milestoneId", async (c) => {
     const patch = await parseBody(c, UpdateMilestoneInput);
     const row = await updateRow(db, "milestones", "milestone_id", c.req.param("projectId"), c.req.param("milestoneId"), patch);
-    return c.json(row ?? notFound("milestone"));
+    const milestone = row ?? notFound("milestone");
+    changed(c.req.param("projectId"), "plan");
+    return c.json(milestone);
   });
 
   // ---- tasks ---------------------------------------------------------------
@@ -244,6 +258,7 @@ export function createApp(
       );
       return rows[0];
     });
+    changed(projectId, "plan");
     return c.json(task, 201);
   });
 
@@ -252,7 +267,9 @@ export function createApp(
     // Any status a person writes is theirs: the planning agent won't move it again.
     const withOwner = patch.plan_status === undefined ? patch : { ...patch, plan_status_set_by: HUMAN_STATUS_SETTER };
     const row = await updateRow(db, "tasks", "task_id", c.req.param("projectId"), c.req.param("taskId"), withOwner);
-    return c.json(row ?? notFound("task"));
+    const task = row ?? notFound("task");
+    changed(c.req.param("projectId"), "plan");
+    return c.json(task);
   });
 
   // ---- dependencies --------------------------------------------------------
@@ -263,6 +280,7 @@ export function createApp(
       `insert into task_dependencies (project_id, task_id, depends_on_task_id) values ($1, $2, $3) returning *`,
       [c.req.param("projectId"), input.task_id, input.depends_on_task_id],
     );
+    changed(c.req.param("projectId"), "plan");
     return c.json(rows[0], 201);
   });
 
@@ -271,7 +289,9 @@ export function createApp(
       `delete from task_dependencies where project_id = $1 and task_id = $2 and depends_on_task_id = $3`,
       [c.req.param("projectId"), c.req.param("taskId"), c.req.param("dependsOnTaskId")],
     );
-    return rowCount ? c.body(null, 204) : notFound("dependency");
+    if (!rowCount) notFound("dependency");
+    changed(c.req.param("projectId"), "plan");
+    return c.body(null, 204);
   });
 
   // ---- plan versions -------------------------------------------------------
@@ -317,20 +337,21 @@ export function createApp(
       );
       return row;
     });
+    changed(projectId, "plan");
     return c.json(saved, 201);
   });
 
   // ---- repositories and webhooks (src/api/ingestion.ts) ---------------------
 
-  registerIngestionRoutes(app, db, onEventsIngested, onBranchesPushed);
-  registerBackfillRoutes(app, db);
+  registerIngestionRoutes(app, db, onProjectsChanged, onBranchesPushed);
+  registerBackfillRoutes(app, db, (projectId) => changed(projectId, "backfill"));
 
   // ---- project intelligence (src/api/intelligence.ts) -----------------------
 
   registerIntelligenceRoutes(app, db);
-  registerReplanRoutes(app, db);
-  registerCorrectionRoutes(app, db);
-  registerPlanAgentRoutes(app, db, router);
+  registerReplanRoutes(app, db, (projectId) => changed(projectId, "plan"));
+  registerCorrectionRoutes(app, db, (projectId) => changed(projectId, "correction"));
+  registerPlanAgentRoutes(app, db, router, (projectId) => changed(projectId, "correction"));
 
   // ---- AI Maintainer and Ask Pit Crew --------------------------------------
 
@@ -346,7 +367,7 @@ export function createApp(
 
   // ---- timeline and decisions (src/api/timeline.ts) ------------------------
 
-  registerTimelineRoutes(app, db);
+  registerTimelineRoutes(app, db, (projectId) => changed(projectId, "decision"));
 
   // ---- AI run history / failures (src/api/aiRuns.ts) ------------------------
 

@@ -16,7 +16,7 @@ const AgentInput = z.object({ member_id: z.string().min(1).nullable().default(nu
 const UndoInput = z.object({ member_id: z.string().min(1) });
 const MOVES_LIMIT = { default: 100, max: 200 };
 
-export function registerPlanAgentRoutes(app: Hono, db: Db, router: ModelRouter | null) {
+export function registerPlanAgentRoutes(app: Hono, db: Db, router: ModelRouter | null, onPlanChanged?: (projectId: string) => void) {
   app.post("/projects/:projectId/plan-agent/bootstrap", async (c) => {
     const input = await parseBody(c, AgentInput);
     const projectId = c.req.param("projectId");
@@ -28,7 +28,7 @@ export function registerPlanAgentRoutes(app: Hono, db: Db, router: ModelRouter |
     // The plan has already been committed at this point. A follow-up analysis
     // failure must not turn a successful plan creation into a misleading 500.
     // forcePlanSync: a fresh plan catches up with work already in the repo now.
-    const analysis = await runAnalysis(db, router, projectId, new Date(), { forcePlanSync: true }).catch((error) => {
+    const analysis = await runAnalysis(db, router, projectId, new Date(), { forcePlanSync: true, trigger: "bootstrap" }).catch((error) => {
       console.error("post-bootstrap analysis failed", { projectId, error });
       return undefined;
     });
@@ -96,13 +96,14 @@ export function registerPlanAgentRoutes(app: Hono, db: Db, router: ModelRouter |
       );
       return undone;
     });
+    onPlanChanged?.(projectId);
     return c.json(move);
   });
 
   app.post("/projects/:projectId/plan-agent/run", async (c) => {
     await parseBody(c, AgentInput);
     const projectId = c.req.param("projectId");
-    const analysis = await runAnalysis(db, router, projectId, new Date(), { forcePlanSync: true });
+    const analysis = await runAnalysis(db, router, projectId, new Date(), { forcePlanSync: true, trigger: "manual" });
     const [workspace] = await loadWorkspaces(db, [projectId]);
     return c.json({ analysis, workspace });
   });

@@ -14,7 +14,7 @@ const LINKED_TASKS = `
              where t.entity_type = 'github_events' and l.project_id = t.project_id
                and l.event_id = t.entity_id and l.status <> 'rejected'), '{}')`;
 
-export function registerTimelineRoutes(app: Hono, db: Db) {
+export function registerTimelineRoutes(app: Hono, db: Db, onDecision?: (projectId: string) => void) {
   async function requireProject(projectId: string) {
     const { rowCount } = await db.query("select 1 from projects where project_id = $1", [projectId]);
     if (!rowCount) notFound("project");
@@ -107,6 +107,7 @@ export function registerTimelineRoutes(app: Hono, db: Db) {
       );
       return row;
     });
+    onDecision?.(projectId);
     return c.json(decision, 201);
   });
 }

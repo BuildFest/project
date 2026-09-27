@@ -7,7 +7,7 @@ import { notFound } from "./http.js";
 // gets the running one's start time instead of starting another.
 const running = new Map<string, string>();
 
-export function registerBackfillRoutes(app: Hono, db: Db) {
+export function registerBackfillRoutes(app: Hono, db: Db, onComplete?: (projectId: string) => void) {
   app.post("/projects/:projectId/repositories/:repositoryId/backfill", async (c) => {
     const { projectId, repositoryId } = c.req.param();
     const { rowCount } = await db.query("select 1 from repositories where project_id = $1 and repository_id = $2", [
@@ -23,7 +23,10 @@ export function registerBackfillRoutes(app: Hono, db: Db) {
     running.set(repositoryId, startedAt);
     // Tens of GitHub calls; runs after the response. Progress: repository.last_backfill_at.
     void runBackfill(db, repositoryId)
-      .then((stats) => console.log("backfill finished", { repositoryId, ...stats }))
+      .then((stats) => {
+        console.log("backfill finished", { repositoryId, ...stats });
+        onComplete?.(projectId);
+      })
       .catch((error) => console.error("backfill failed", { repositoryId, error }))
       .finally(() => running.delete(repositoryId));
     return c.json({ started_at: startedAt }, 202);

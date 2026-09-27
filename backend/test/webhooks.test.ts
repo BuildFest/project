@@ -405,15 +405,17 @@ describe("branch changed files (compare API)", () => {
   });
 
   it("debounces a burst of pushes into one compare call", async () => {
-    const { repositoryId } = await pushedBranch();
+    const { projectId, repositoryId } = await pushedBranch();
     const { calls, fetchImpl } = compareFetch([{ filename: "x.ts" }]);
-    const schedule = createCompareScheduler(db.pool, 20, fetchImpl);
+    const onUpdated = vi.fn();
+    const schedule = createCompareScheduler(db.pool, 20, fetchImpl, onUpdated);
     const ref = { repositoryId, branch: "feature/auth" };
     schedule([ref]);
     schedule([ref]);
     schedule([ref]);
     await vi.waitFor(async () => expect((await branchState(repositoryId)).changed_files).toEqual(["x.ts"]));
     expect(calls).toHaveLength(1);
+    await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledWith(projectId));
   });
 });
 

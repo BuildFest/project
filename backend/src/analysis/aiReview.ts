@@ -73,6 +73,49 @@ function fallback(input: ReviewAnalysisInput, error: unknown = null): ReviewAnal
   };
 }
 
+function validateReply(
+  reply: z.infer<typeof ReviewReply>,
+  input: ReviewAnalysisInput,
+  eventById: Map<string, GithubEvent>,
+  stateById: Map<string, DerivedTaskState>,
+  signalByFingerprint: Map<string, DesiredHealthSignal>,
+) {
+  if (!sameMembers(reply.tasks.map((item) => item.task_id), input.states.map((state) => state.task_id))) {
+    throw new Error("AI review task IDs do not exactly match rule output");
+  }
+  if (!sameMembers(reply.signals.map((item) => item.fingerprint), input.signals.map((signal) => signal.fingerprint))) {
+    throw new Error("AI review signal IDs do not exactly match rule output");
+  }
+
+  for (const item of reply.tasks) {
+    const rule = stateById.get(item.task_id)!;
+    if (!subset(item.evidence_event_ids, rule.evidence_event_ids)) {
+      throw new Error(`AI review invented evidence for task ${item.task_id}`);
+    }
+    if (rule.evidence_event_ids.length > 0 && item.evidence_event_ids.length === 0) {
+      throw new Error(`AI review omitted evidence for task ${item.task_id}`);
+    }
+    if (
+      item.status === "complete" &&
+      !item.evidence_event_ids.some((id) => eventById.get(id)?.event_type === "pull_request_merged")
+    ) {
+      throw new Error(`AI review marked task ${item.task_id} complete without merged evidence`);
+    }
+    if (item.status === "possibly_blocked" && rule.blocking_task_ids.length === 0) {
+      throw new Error(`AI review marked task ${item.task_id} blocked without a blocking task`);
+    }
+  }
+  for (const item of reply.signals) {
+    const rule = signalByFingerprint.get(item.fingerprint)!;
+    if (!subset(item.evidence_event_ids, rule.evidence_event_ids)) {
+      throw new Error(`AI review invented evidence for signal ${item.fingerprint}`);
+    }
+    if (item.keep && rule.evidence_event_ids.length > 0 && item.evidence_event_ids.length === 0) {
+      throw new Error(`AI review omitted evidence for signal ${item.fingerprint}`);
+    }
+  }
+}
+
 /**
  * Lets the smart model review rule outputs, then enforces hard facts before
  * returning anything. Any malformed or unsupported claim discards the whole
@@ -100,45 +143,33 @@ export async function reviewAnalysis(
   };
 
   try {
-    const reply = await runJson(
+    const request = (messages: Array<{ role: "user" | "assistant"; content: string }>, cacheSuffix = "") => runJson(
       router,
       "state_review",
-      { system: SYSTEM_PROMPT, messages: [{ role: "user", content: JSON.stringify(facts) }], maxTokens: 4_000, temperature: 0 },
+      { system: SYSTEM_PROMPT, messages, maxTokens: 4_000, temperature: 0 },
       ReviewReply,
-      { cacheKey: JSON.stringify(facts) },
+      { cacheKey: `${JSON.stringify(facts)}${cacheSuffix}` },
     );
-    if (!sameMembers(reply.tasks.map((item) => item.task_id), input.states.map((state) => state.task_id))) {
-      throw new Error("AI review task IDs do not exactly match rule output");
-    }
-    if (!sameMembers(reply.signals.map((item) => item.fingerprint), input.signals.map((signal) => signal.fingerprint))) {
-      throw new Error("AI review signal IDs do not exactly match rule output");
-    }
-
-    for (const item of reply.tasks) {
-      const rule = stateById.get(item.task_id)!;
-      if (!subset(item.evidence_event_ids, rule.evidence_event_ids)) {
-        throw new Error(`AI review invented evidence for task ${item.task_id}`);
-      }
-      if (rule.evidence_event_ids.length > 0 && item.evidence_event_ids.length === 0) {
-        throw new Error(`AI review omitted evidence for task ${item.task_id}`);
-      }
-      if (
-        item.status === "complete" &&
-        !item.evidence_event_ids.some((id) => eventById.get(id)?.event_type === "pull_request_merged")
-      ) {
-        throw new Error(`AI review marked task ${item.task_id} complete without merged evidence`);
-      }
-      if (item.status === "possibly_blocked" && rule.blocking_task_ids.length === 0) {
-        throw new Error(`AI review marked task ${item.task_id} blocked without a blocking task`);
-      }
-    }
-    for (const item of reply.signals) {
-      const rule = signalByFingerprint.get(item.fingerprint)!;
-      if (!subset(item.evidence_event_ids, rule.evidence_event_ids)) {
-        throw new Error(`AI review invented evidence for signal ${item.fingerprint}`);
-      }
-      if (item.keep && rule.evidence_event_ids.length > 0 && item.evidence_event_ids.length === 0) {
-        throw new Error(`AI review omitted evidence for signal ${item.fingerprint}`);
+    const factMessage = { role: "user" as const, content: JSON.stringify(facts) };
+    let reply = await request([factMessage]);
+    try {
+      validateReply(reply, input, eventById, stateById, signalByFingerprint);
+    } catch (firstError) {
+      // A schema-valid model response can still mistype or invent an ID. Give
+      // it one focused repair attempt instead of discarding an otherwise useful
+      // review immediately. The repaired response must pass every same guard.
+      try {
+        reply = await request([
+          factMessage,
+          { role: "assistant", content: JSON.stringify(reply) },
+          {
+            role: "user",
+            content: `That response was rejected: ${(firstError as Error).message}. Return the full JSON object again. Copy every task_id, fingerprint, and evidence_event_id exactly from the supplied facts; never create or alter an ID.`,
+          },
+        ], ":semantic-repair");
+        validateReply(reply, input, eventById, stateById, signalByFingerprint);
+      } catch (repairError) {
+        throw new Error(`${(firstError as Error).message}; repair failed: ${repairError instanceof Error ? repairError.message : String(repairError)}`);
       }
     }
 

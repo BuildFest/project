@@ -66,7 +66,12 @@ export async function storeChangedFiles(db: Queryable, ref: BranchRef, headSha: 
  * Debounced per branch: a burst of pushes costs one compare call, and the
  * call reads the head at run time rather than at schedule time.
  */
-export function createCompareScheduler(db: Queryable, delayMs = 3000, fetchImpl: Fetch = fetch) {
+export function createCompareScheduler(
+  db: Queryable,
+  delayMs = 3000,
+  fetchImpl: Fetch = fetch,
+  onUpdated?: (projectId: string) => void,
+) {
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   return (refs: BranchRef[]) => {
     for (const ref of refs) {
@@ -76,9 +81,16 @@ export function createCompareScheduler(db: Queryable, delayMs = 3000, fetchImpl:
         key,
         setTimeout(() => {
           timers.delete(key);
-          refreshChangedFiles(db, ref, fetchImpl).catch((error) =>
-            console.error("changed-files refresh failed", { ...ref, error }),
-          );
+          void refreshChangedFiles(db, ref, fetchImpl)
+            .then(async (result) => {
+              if (result !== "updated" || !onUpdated) return;
+              const { rows } = await db.query<{ project_id: string }>(
+                "select project_id from repositories where repository_id = $1",
+                [ref.repositoryId],
+              );
+              if (rows[0]) onUpdated(rows[0].project_id);
+            })
+            .catch((error) => console.error("changed-files refresh failed", { ...ref, error }));
         }, delayMs),
       );
     }

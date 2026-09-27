@@ -284,7 +284,18 @@ suggestions instead of silently replacing team-authored work.
 Runs event linking, derived-state analysis, health checks, collision detection,
 and replan generation immediately, and forces a plan sync (§3.10). Normal
 operation also schedules this work after ingested events and during the
-background project sweep. `bootstrap` (§3.8) forces a plan sync too.
+background project sweep. Brief, project, team, task, milestone, dependency,
+decision, correction, accepted-replan, completed-backfill, and refreshed
+branch-comparison writes also schedule it. `bootstrap` (§3.8) forces a plan
+sync too.
+
+Runs are persisted in `planning_agent_status`, including trigger, rules/full
+mode, start/completion times, outcome, error, and result counts. A no-op run is
+still a fresh successful heartbeat. The first sweep runs the full pipeline at
+server startup; later rules-based health sweeps run every 60 seconds.
+Model-inclusive runs remain subject
+to the per-project cooldown; a change received during cooldown gets a rules
+pass immediately and one deferred full review when the cooldown expires.
 
 ```ts
 { member_id: string | null }
@@ -422,7 +433,9 @@ Called by GitHub, not by the frontend. It takes the raw payload plus the
 `ignored`. Normalization runs inline in one transaction (cheap, no GitHub API
 calls). Analysis still happens after the response, never inline (tech doc §3).
 A debounced per-project runner performs task linking, branch derivation,
-rules and guarded AI review after commit. A 60-second sweep covers
+rules and guarded AI review after commit. A second run follows a completed
+GitHub changed-files comparison, so collision analysis sees the final branch
+diff rather than only the webhook payload. A 60-second sweep covers
 time-dependent health signals; `npm run analyze -- <projectId>` runs the same
 pipeline manually. AI credentials are optional and deterministic rules remain
 the fallback.
@@ -510,6 +523,19 @@ call. The dashboard polls this. It only reads; it never triggers analysis.
 ```ts
 interface ProjectState {
   computed_at: string | null;              // latest analyzer write; null if never analyzed
+  agent: {
+    status: "waiting" | "running" | "healthy" | "degraded" | "failed";
+    last_trigger: string | null;            // brief, plan, github_event, decision, ...
+    last_mode: "full" | "rules" | null;
+    ai_available: boolean;                  // planning jobs have a configured provider
+    last_started_at: string | null;
+    last_completed_at: string | null;
+    last_succeeded_at: string | null;
+    last_failed_at: string | null;
+    last_error: string | null;
+    last_result: Record<string, unknown> | null;
+    runs_count: number;
+  };
   tasks: DerivedTaskState[];               // one per non-archived task that has been analyzed, plan order
   signals: HealthSignal[];                 // status = "active" only, newest first
   collisions: Collision[];                 // status = "active" only, newest first

@@ -18,13 +18,13 @@ function context(overrides: Partial<ReplanContext> = {}): ReplanContext {
     planSnapshot: {},
     memberIds: ["member_1"],
     tasks: [
-      { task_id: "blocker", task_key: "PC-1", title: "API", priority: "high", scope: "must_have", plan_status: "in_progress", milestone_id: "m1", target_at: null, sort_order: 1, archived: false },
-      { task_id: "work", task_key: "PC-2", title: "UI", priority: "medium", scope: "must_have", plan_status: "in_progress", milestone_id: "m1", target_at: null, sort_order: 2, archived: false },
-      { task_id: "optional", task_key: "PC-3", title: "Polish", priority: "low", scope: "optional", plan_status: "not_started", milestone_id: "m1", target_at: null, sort_order: 3, archived: false },
+      { task_id: "blocker", task_key: "PC-1", title: "API", description: null, owner_member_id: null, priority: "high", scope: "must_have", plan_status: "in_progress", milestone_id: "m1", target_at: null, sort_order: 1, archived: false },
+      { task_id: "work", task_key: "PC-2", title: "UI", description: null, owner_member_id: null, priority: "medium", scope: "must_have", plan_status: "in_progress", milestone_id: "m1", target_at: null, sort_order: 2, archived: false },
+      { task_id: "optional", task_key: "PC-3", title: "Polish", description: null, owner_member_id: null, priority: "low", scope: "optional", plan_status: "not_started", milestone_id: "m1", target_at: null, sort_order: 3, archived: false },
     ],
     milestones: [
-      { milestone_id: "m1", name: "Demo", target_at: new Date("2026-09-26T12:00:00Z"), sort_order: 1, archived: false },
-      { milestone_id: "m2", name: "Later", target_at: new Date("2026-09-27T12:00:00Z"), sort_order: 2, archived: false },
+      { milestone_id: "m1", name: "Demo", description: null, target_at: new Date("2026-09-26T12:00:00Z"), sort_order: 1, archived: false },
+      { milestone_id: "m2", name: "Later", description: null, target_at: new Date("2026-09-27T12:00:00Z"), sort_order: 2, archived: false },
     ],
     dependencies: [{ task_id: "work", depends_on_task_id: "blocker" }],
     states: [
@@ -42,6 +42,8 @@ function context(overrides: Partial<ReplanContext> = {}): ReplanContext {
       related_milestone_ids: ["m1"],
       evidence_event_ids: ["event_1"],
     }],
+    intentUpdates: [],
+    sourceIds: ["sig_slip"],
     ...overrides,
   };
 }
@@ -264,6 +266,31 @@ describe("maybeGenerateReplan", () => {
       changes: [{ op: "update_task", task_id: seeded.blocker, changes: { priority: "critical" } }],
     }), seeded.projectId);
     expect(result).toMatchObject({ created: true, generatedBy: "rules" });
+  });
+
+  it("uses a brief update made after the saved plan as replanning evidence", async () => {
+    const seeded = await seedProject("dependency");
+    const { rows: [brief] } = await pool.query<{ updated_at: Date }>(
+      `insert into project_briefs (project_id,content,updated_at)
+       values ($1,'The API must support offline mode.',now() + interval '1 second') returning updated_at`,
+      [seeded.projectId],
+    );
+    const sourceId = `brief:${brief.updated_at.toISOString()}`;
+    const result = await maybeGenerateReplan(pool, router({
+      rationale: `${sourceId} adds offline mode to the required scope`,
+      signal_ids: [sourceId],
+      changes: [{ op: "update_task", task_id: seeded.blocker, changes: { title: "Offline-capable API" } }],
+    }), seeded.projectId);
+
+    expect(result).toMatchObject({ created: true, generatedBy: "llm" });
+    const suggestion = (await pool.query(
+      "select related_signal_ids,proposed_changes from replan_suggestions where suggestion_id=$1",
+      [result.suggestionId],
+    )).rows[0];
+    expect(suggestion.related_signal_ids).toEqual([sourceId]);
+    expect(suggestion.proposed_changes).toEqual([
+      { op: "update_task", task_id: seeded.blocker, changes: { title: "Offline-capable API" } },
+    ]);
   });
 
   it("runs after analysis persistence and exposes the generation result", async () => {

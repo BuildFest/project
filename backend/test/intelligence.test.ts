@@ -99,6 +99,19 @@ describe("GET /projects/:projectId/state", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       computed_at: null,
+      agent: {
+        status: "waiting",
+        last_trigger: null,
+        last_mode: null,
+        ai_available: false,
+        last_started_at: null,
+        last_completed_at: null,
+        last_succeeded_at: null,
+        last_failed_at: null,
+        last_error: null,
+        last_result: null,
+        runs_count: 0,
+      },
       tasks: [],
       signals: [],
       collisions: [],

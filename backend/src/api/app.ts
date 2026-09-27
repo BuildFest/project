@@ -15,6 +15,8 @@ import { registerIngestionRoutes } from "./ingestion.js";
 import { registerIntelligenceRoutes } from "./intelligence.js";
 import { registerReplanRoutes } from "./replans.js";
 import { registerTimelineRoutes } from "./timeline.js";
+import { registerMaintainerRoutes } from "./maintainer.js";
+import type { ModelRouter } from "../ai/router.js";
 import {
   CreateDependencyInput,
   CreateMemberInput,
@@ -58,6 +60,7 @@ export function createApp(
   db: Db,
   onEventsIngested?: (projectIds: string[]) => void,
   onBranchesPushed?: (refs: BranchRef[]) => void,
+  router: ModelRouter | null = null,
 ) {
   const app = new Hono();
 
@@ -284,6 +287,10 @@ export function createApp(
   registerIntelligenceRoutes(app, db);
   registerReplanRoutes(app, db);
   registerCorrectionRoutes(app, db);
+
+  // ---- AI Maintainer and Ask Pit Crew --------------------------------------
+
+  registerMaintainerRoutes(app, db, router);
 
   // ---- events (src/api/events.ts) ------------------------------------------
 

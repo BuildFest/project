@@ -355,6 +355,33 @@ caps the list at 300 files.
 
 These endpoints are proposed by A. B confirms or edits them in the PR.
 
+The Maintainer uses only read-only project tools and validates every cited
+task, event, signal, collision and replan ID. Model routing and daily budgets
+remain enforced by the shared router. Without configured model keys, digest
+and Q&A endpoints return deterministic grounded summaries.
+
+### 5.0 Maintainer and Ask Pit Crew
+
+- `POST /projects/:projectId/maintainer/digest` → `201 MaintainerNote`
+- `GET /projects/:projectId/maintainer/notes` → `200 MaintainerNote[]`
+- `POST /projects/:projectId/ask` `{ question: string }` → `201 MaintainerNote`
+
+Digests also run periodically for active projects. Answers and digests are
+notes only: they never mutate tasks, events, plan versions, or accept replans.
+An initial digest sweep runs at server startup; later sweeps use
+`MAINTAINER_DIGEST_MS` (six hours by default). Ask Pit Crew is limited per
+project to `ASK_RATE_LIMIT_PER_MINUTE` requests per minute (default 20, `0`
+disables the limit) and returns `429` when exceeded. Without model keys, Ask
+Pit Crew still answers the actual question by matching it to grounded task
+state, active risks, and recent repository events.
+
+Integration note: `ai_runs` uses the shared audit columns (`run_id`,
+`project_id`, `job`, provider/model/token/duration/error fields) plus optional
+`tier`, `cached`, `status`, and `source_event_id`. `maintainer_notes` is a
+common superset: digest/Ask rows use `kind`, `title`, `body`, `question`, and
+`citations`; pre-merge rows use repository/PR fields, `note`, `facts`, and
+`evidence_event_ids`.
+
 ### 5.1 ✅ `GET /projects/:projectId/state`
 Everything the dashboard needs to paint the "plan vs reality" view in one
 call. The dashboard polls this. It only reads; it never triggers analysis.
@@ -469,6 +496,18 @@ type PlanChange =
   | { op: "remove_dependency"; task_id: string; depends_on_task_id: string }
   | { op: "update_milestone"; milestone_id: string; changes: { target_at?: string | null; name?: string } };
 ```
+
+### 5.8 ✅ `GET /projects/:projectId/pr-notes`
+
+Returns the newest pre-merge coordination notes for the dashboard. These notes
+cover collision risk, incomplete dependencies, task scope and plan alignment;
+they are not code-quality reviews. Query: `limit?` (default 50, max 200).
+
+Each row includes `pull_request_number`, `branch`, optional `task_id`, `note`,
+the grounded `facts`, `evidence_event_ids`, and `generated_by` (`rules` or
+`llm`). One note is stored per PR opened, updated or reopened event.
+
+→ `200 MaintainerNote[]` · `404`
 
 ---
 

@@ -56,6 +56,7 @@ function defaultClient(tier: TierConfig, fetchImpl: Fetch): ModelClient {
       tier.clientId,
       tier.apiKey,
       fetchImpl,
+      tier.apiVersion,
     );
   }
   return tier.provider === "anthropic"

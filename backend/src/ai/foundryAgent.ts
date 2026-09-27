@@ -11,10 +11,17 @@ interface ResponsesApiResponse {
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
-export function foundryResponsesUrl(endpoint: string): string {
+// Foundry's hosted-agent Responses protocol requires api-version on every
+// call ("Missing required query parameter: api-version" otherwise); the
+// non-dated "v1" surface is what this endpoint shape (…/endpoint/protocols/
+// openai/responses) expects. Overridable in case Azure changes it.
+export const DEFAULT_FOUNDRY_API_VERSION = "v1";
+
+export function foundryResponsesUrl(endpoint: string, apiVersion = DEFAULT_FOUNDRY_API_VERSION): string {
   const url = new URL(endpoint);
   const path = url.pathname.replace(/\/+$/, "");
   url.pathname = path.endsWith("/responses") ? path : `${path}/responses`;
+  if (!url.searchParams.has("api-version")) url.searchParams.set("api-version", apiVersion);
   return url.toString();
 }
 
@@ -74,8 +81,9 @@ export function foundryAgentClient(
   clientId: string,
   clientSecret: string,
   fetchImpl: Fetch = fetch,
+  apiVersion = DEFAULT_FOUNDRY_API_VERSION,
 ): ModelClient {
-  const url = foundryResponsesUrl(endpoint);
+  const url = foundryResponsesUrl(endpoint, apiVersion);
   const getToken = entraTokenProvider(tenantId, clientId, clientSecret, fetchImpl);
   return {
     provider: "foundry",

@@ -81,8 +81,14 @@ export default function PlanAgentWorkspace({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.72fr)]">
         <BriefEditor workspace={workspace} onChange={onChange} />
 
-        <section className="relative overflow-hidden rounded-lg border border-link/35 bg-gradient-to-br from-link/15 via-surface to-purple-500/10 p-5">
+        <section aria-busy={busy !== null}
+          className="relative overflow-hidden rounded-lg border border-link/35 bg-gradient-to-br from-link/15 via-surface to-purple-500/10 p-5">
           <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-link/10 blur-3xl" />
+          {busy && (
+            <AnalyzingOverlay
+              label={busy === "generate" ? "Generating your plan…" : "Analyzing project activity…"}
+            />
+          )}
           <div className="relative">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -159,6 +165,22 @@ export default function PlanAgentWorkspace({
           <PlanTable workspace={workspace} onChange={onChange} />
         </div>
       </details>
+    </div>
+  );
+}
+
+// Shown over the agent card while it's actually reasoning (contract: this
+// call runs a real LLM completion and can take up to a minute or more), so
+// the button label alone isn't enough feedback not to look stuck/broken.
+function AnalyzingOverlay({ label }: { label: string }) {
+  return (
+    <div role="status" aria-live="polite"
+      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-lg bg-bg/85 text-center backdrop-blur-sm">
+      <span className="h-8 w-8 animate-spin rounded-full border-2 border-link border-t-transparent" aria-hidden />
+      <p className="text-sm font-semibold text-header">{label}</p>
+      <p className="max-w-xs px-4 text-xs text-muted">
+        The planning agent is reasoning over the brief and project activity — this can take up to a minute.
+      </p>
     </div>
   );
 }

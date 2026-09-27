@@ -303,6 +303,11 @@ Called by GitHub, not by the frontend. It takes the raw payload plus the
 `github_events` and update `branch_states`; other events are stored as
 `ignored`. Normalization runs inline in one transaction (cheap, no GitHub API
 calls). Analysis still happens after the response, never inline (tech doc §3).
+A debounced per-project runner performs task linking, branch derivation,
+rules and guarded AI review after commit. A 60-second sweep covers
+time-dependent health signals; `npm run analyze -- <projectId>` runs the same
+pipeline manually. AI credentials are optional and deterministic rules remain
+the fallback.
 A delivery that fails is stored as `failed` and GitHub's **Redeliver** retries it.
 
 ### 4.5 ✅ `GET /projects/:projectId/events`
@@ -374,7 +379,7 @@ already count toward the task's derived status (shown as AI-inferred), but they
 stay in the review queue until someone confirms or rejects them. Each link has
 a `reason: string | null` explaining why it was made.
 
-### 5.2 📝 `GET /projects/:projectId/tasks/:taskId/evidence`
+### 5.2 ✅ `GET /projects/:projectId/tasks/:taskId/evidence`
 Answers "why does Pit Crew believe this?" (tech doc §17).
 
 ```ts
@@ -388,7 +393,10 @@ interface TaskEvidence {
 ```
 → `200 TaskEvidence` · `404`
 
-### 5.3 📝 `PUT /projects/:projectId/tasks/:taskId/override`
+`blocking_tasks` follows `state.blocking_task_ids` order and omits IDs that no
+longer resolve to a task in the project. `links` and `signals` are newest first.
+
+### 5.3 ✅ `PUT /projects/:projectId/tasks/:taskId/override`
 A human corrects the derived status. `effective_status` changes at once, while
 `computed_status` is kept (tech doc §13).
 
@@ -401,11 +409,11 @@ state so the UI can re-confirm.
 
 → `200 DerivedTaskState` · `409 { error, current: DerivedTaskState }`
 
-### 5.4 📝 `DELETE /projects/:projectId/tasks/:taskId/override`
+### 5.4 ✅ `DELETE /projects/:projectId/tasks/:taskId/override`
 Clears the override. `effective_status` falls back to `computed_status`.
 → `200 DerivedTaskState`
 
-### 5.5 📝 Event–task links
+### 5.5 ✅ Event–task links
 - `POST /projects/:projectId/links`. A human links an event to a task:
   `{ event_id, task_id, member_id }` → `201 EventTaskLink` (`method: "manual"`, `status: "confirmed"`)
 - `PATCH /projects/:projectId/links/:linkId`. Confirms or rejects a suggestion:
@@ -414,7 +422,7 @@ Clears the override. `effective_status` falls back to `computed_status`.
 An `llm` link can only become `confirmed` through this endpoint. The
 database rejects a confirmation without a confirmer.
 
-### 5.6 📝 Dismiss a signal or collision
+### 5.6 ✅ Dismiss a signal or collision
 - `PATCH /projects/:projectId/signals/:signalId` `{ status: "dismissed", member_id }` → `200 HealthSignal`
 - `PATCH /projects/:projectId/collisions/:collisionId` `{ status: "dismissed", member_id }` → `200 Collision`
 

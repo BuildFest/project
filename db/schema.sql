@@ -367,6 +367,8 @@ create table event_task_links (
   created_by   text,  -- member_id, or 'system' for analyzers
   confirmed_by text,
   confirmed_at timestamptz,
+  reviewed_by  text,
+  reviewed_at  timestamptz,
   unique (event_id, task_id),
   foreign key (project_id, event_id)
     references github_events (project_id, event_id) on delete cascade,
@@ -463,6 +465,8 @@ create table health_signals (
   evidence_event_ids    text[] not null default '{}',
   detected_at           timestamptz not null default now(),
   resolved_at           timestamptz,
+  dismissed_by          text,
+  dismissed_at          timestamptz,
   -- Stable hash of the underlying condition, e.g. "dependency_incomplete:task_A:task_B".
   fingerprint           text not null,
   check (status <> 'active' or resolved_at is null)
@@ -490,6 +494,8 @@ create table collisions (
   status            text not null default 'active' check (status in ('active', 'resolved', 'dismissed')),
   detected_at       timestamptz not null default now(),
   resolved_at       timestamptz,
+  dismissed_by      text,
+  dismissed_at      timestamptz,
   -- Store each pair in one canonical order so (a,b) and (b,a) can't both exist.
   check (branch_a < branch_b),
   check (status <> 'active' or resolved_at is null),

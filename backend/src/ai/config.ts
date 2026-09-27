@@ -7,6 +7,7 @@ export type Tier = "fast" | "smart";
 export type AiJob =
   | "link_suggestion"
   | "diff_summary"
+  | "state_review"
   | "pre_merge_review"
   | "replan"
   | "digest"
@@ -40,6 +41,7 @@ const DEFAULT_TIERS: Record<Tier, { provider: ProviderName; model: string }> = {
 const DEFAULT_JOBS: Record<AiJob, Tier> = {
   link_suggestion: "fast",
   diff_summary: "fast",
+  state_review: "smart",
   pre_merge_review: "smart",
   replan: "smart",
   digest: "smart",

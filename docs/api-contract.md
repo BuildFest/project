@@ -360,11 +360,15 @@ task, event, signal, collision and replan ID. Model routing and daily budgets
 remain enforced by the shared router. Without configured model keys, digest
 and Q&A endpoints return deterministic grounded summaries.
 
-### 5.0 Maintainer and Ask Pit Crew
+### 5.0 ✅ Maintainer and Ask Pit Crew
 
 - `POST /projects/:projectId/maintainer/digest` → `201 MaintainerNote`
 - `GET /projects/:projectId/maintainer/notes` → `200 MaintainerNote[]`
 - `POST /projects/:projectId/ask` `{ question: string }` → `201 MaintainerNote`
+
+`404` unknown project · `400` question under 2 or over 1000 chars · `429`
+Ask rate limit. POST responses also carry `error`: why the model fell back
+to rules, or `null`.
 
 Digests also run periodically for active projects. Answers and digests are
 notes only: they never mutate tasks, events, plan versions, or accept replans.
@@ -379,8 +383,7 @@ Integration note: `ai_runs` uses the shared audit columns (`run_id`,
 `project_id`, `job`, provider/model/token/duration/error fields) plus optional
 `tier`, `cached`, `status`, and `source_event_id`. `maintainer_notes` is a
 common superset: digest/Ask rows use `kind`, `title`, `body`, `question`, and
-`citations`; pre-merge rows use repository/PR fields, `note`, `facts`, and
-`evidence_event_ids`.
+`citations`. Pre-merge notes live in their own `pr_notes` table (§5.8).
 
 ### 5.1 ✅ `GET /projects/:projectId/state`
 Everything the dashboard needs to paint the "plan vs reality" view in one
@@ -507,7 +510,7 @@ Each row includes `pull_request_number`, `branch`, optional `task_id`, `note`,
 the grounded `facts`, `evidence_event_ids`, and `generated_by` (`rules` or
 `llm`). One note is stored per PR opened, updated or reopened event.
 
-→ `200 MaintainerNote[]` · `404`
+→ `200 PrNote[]` · `404`
 
 ---
 
@@ -537,9 +540,6 @@ so `related_task_ids` in the response is always current.
 → `200 Decision[]` (newest first) / `201 Decision` · `400` member or tasks
 not in this project · `404` unknown project. Each decision also adds a
 `decision` timeline item.
-
-`Decision` isn't in `types.ts` yet. Its fields are `decision_id`, `project_id`,
-`title`, `body`, `decided_by`, `decided_at`, `related_task_ids`, `suggestion_id`.
 
 ---
 

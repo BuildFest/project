@@ -16,6 +16,7 @@ import type {
   EventTaskLink,
   DeliveryRetryResult,
   Repository,
+  RiskHistoryItem,
   DerivedStatus,
   DerivedTaskState,
   MaintainerNote,
@@ -232,6 +233,37 @@ export async function createManualLink(
 export async function getState(projectId: string): Promise<ProjectState> {
   if (usingMockApi) return analyzer.getState(projectId);
   return http<ProjectState>("GET", `/projects/${enc(projectId)}/state`);
+}
+
+export async function listRisks(
+  projectId: string,
+  opts: { status?: "all" | "active" | "resolved" | "dismissed"; limit?: number } = {}
+): Promise<RiskHistoryItem[]> {
+  if (usingMockApi) {
+    const state = await analyzer.getState(projectId);
+    return [
+      ...state.signals.map((signal) => ({
+        risk_id: signal.signal_id, kind: "signal" as const, title: signal.title,
+        description: signal.explanation, status: signal.status, severity: signal.severity,
+        related_task_ids: signal.related_task_ids, detected_at: signal.detected_at,
+        resolved_at: signal.resolved_at, detection_event_id: null, resolution_event_id: null,
+      })),
+      ...state.collisions.map((collision) => ({
+        risk_id: collision.collision_id, kind: "collision" as const,
+        title: `Overlapping work on ${collision.branch_a} and ${collision.branch_b}`,
+        description: `${collision.overlapping_files.length} shared file${collision.overlapping_files.length === 1 ? "" : "s"}`,
+        status: collision.status, severity: "warning" as const,
+        related_task_ids: [collision.task_a_id, collision.task_b_id].filter((id): id is string => id !== null),
+        detected_at: collision.detected_at, resolved_at: collision.resolved_at,
+        detection_event_id: null, resolution_event_id: null,
+      })),
+    ].filter((risk) => !opts.status || opts.status === "all" || risk.status === opts.status).slice(0, opts.limit ?? 20);
+  }
+  const q = new URLSearchParams();
+  if (opts.status) q.set("status", opts.status);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return http<RiskHistoryItem[]>("GET", `/projects/${enc(projectId)}/risks${qs ? `?${qs}` : ""}`);
 }
 
 export async function getTaskEvidence(projectId: string, taskId: string): Promise<TaskEvidence> {

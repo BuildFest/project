@@ -24,6 +24,69 @@ export interface TaskEvidence {
   signals: Row[];
 }
 
+export type RiskStatus = "active" | "resolved" | "dismissed";
+
+export interface RiskHistoryItem {
+  risk_id: string;
+  kind: "signal" | "collision";
+  title: string;
+  description: string;
+  status: RiskStatus;
+  severity: "info" | "warning" | "critical";
+  related_task_ids: string[];
+  detected_at: Date;
+  resolved_at: Date | null;
+  detection_event_id: string | null;
+  resolution_event_id: string | null;
+}
+
+export async function loadRiskHistory(
+  db: Queryable,
+  projectId: string,
+  status: RiskStatus | "all" = "all",
+  limit = 20,
+): Promise<RiskHistoryItem[] | null> {
+  const project = await db.query("select 1 from projects where project_id = $1", [projectId]);
+  if (project.rowCount === 0) return null;
+
+  const { rows } = await db.query<RiskHistoryItem>(
+    `with risks as (
+       select signal_id as risk_id, 'signal'::text as kind, title, explanation as description,
+              status, severity, related_task_ids, detected_at, resolved_at,
+              'health_signal'::text as entity_type
+         from health_signals where project_id = $1
+       union all
+       select collision_id, 'collision',
+              'Overlapping work on ' || branch_a || ' and ' || branch_b,
+              array_length(overlapping_files, 1) || case when array_length(overlapping_files, 1) = 1 then ' shared file' else ' shared files' end,
+              status, 'warning', array_remove(array[task_a_id, task_b_id], null), detected_at, resolved_at,
+              'collision'
+         from collisions where project_id = $1
+     )
+     select r.*,
+            detected.item_id as detection_event_id,
+            resolved.item_id as resolution_event_id
+       from risks r
+       left join lateral (
+         select item_id from timeline_items
+          where project_id = $1 and entity_type = r.entity_type and entity_id = r.risk_id
+            and kind in ('signal_detected', 'collision_detected')
+          order by occurred_at asc, item_id asc limit 1
+       ) detected on true
+       left join lateral (
+         select item_id from timeline_items
+          where project_id = $1 and entity_type = r.entity_type and entity_id = r.risk_id
+            and kind in ('signal_resolved', 'collision_resolved')
+          order by occurred_at desc, item_id desc limit 1
+       ) resolved on true
+      where ($2 = 'all' or r.status = $2)
+      order by coalesce(r.resolved_at, r.detected_at) desc, r.risk_id desc
+      limit $3`,
+    [projectId, status, limit],
+  );
+  return rows;
+}
+
 // Attaches each link's github_events row as `event`. A second query rather
 // than to_jsonb() so timestamps serialize the same way as every other response.
 async function withEvents(db: Queryable, projectId: string, links: Row[]): Promise<Row[]> {
@@ -140,6 +203,19 @@ export function registerIntelligenceRoutes(app: Hono, db: Db) {
   app.get("/projects/:projectId/state", async (c) => {
     const state = await loadProjectState(db, c.req.param("projectId"));
     return c.json(state ?? notFound("project"));
+  });
+
+  app.get("/projects/:projectId/risks", async (c) => {
+    const rawStatus = c.req.query("status") ?? "all";
+    if (!["all", "active", "resolved", "dismissed"].includes(rawStatus)) {
+      return c.json({ error: "status must be active, resolved, dismissed, or all" }, 400);
+    }
+    const requested = Number(c.req.query("limit") ?? 20);
+    if (!Number.isInteger(requested) || requested < 1) {
+      return c.json({ error: "limit must be a positive integer" }, 400);
+    }
+    const risks = await loadRiskHistory(db, c.req.param("projectId"), rawStatus as RiskStatus | "all", Math.min(requested, 100));
+    return c.json(risks ?? notFound("project"));
   });
 
   app.get("/projects/:projectId/tasks/:taskId/evidence", async (c) => {

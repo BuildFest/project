@@ -417,6 +417,35 @@ already count toward the task's derived status (shown as AI-inferred), but they
 stay in the review queue until someone confirms or rejects them. Each link has
 a `reason: string | null` explaining why it was made.
 
+### 5.1a ✅ `GET /projects/:projectId/risks`
+Returns recent risk lifecycles across health signals and branch collisions.
+Unlike the active-only `/state` snapshot, this endpoint also includes resolved
+and dismissed risks, so clients do not have to pair timeline entries.
+
+- `status=all|active|resolved|dismissed` (default `all`)
+- `limit=1..100` (default `20`)
+
+```ts
+interface RiskHistoryItem {
+  risk_id: string;
+  kind: "signal" | "collision";
+  title: string;
+  description: string;
+  status: "active" | "resolved" | "dismissed";
+  severity: "info" | "warning" | "critical";
+  related_task_ids: string[];
+  detected_at: string;
+  resolved_at: string | null;
+  detection_event_id: string | null;
+  resolution_event_id: string | null;
+}
+```
+
+Resolution events are matched using the risk's stable entity ID, never its
+title or description.
+
+→ `200 RiskHistoryItem[]` · `400` invalid query · `404`
+
 ### 5.2 ✅ `GET /projects/:projectId/tasks/:taskId/evidence`
 Answers "why does Pit Crew believe this?" (tech doc §17).
 

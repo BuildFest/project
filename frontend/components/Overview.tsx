@@ -7,6 +7,7 @@ import {
   dismissCollision,
   dismissSignal,
   getState,
+  listRisks,
   overrideTaskStatus,
   reviewLink,
   updateTask,
@@ -20,6 +21,7 @@ import type {
   HealthSignal,
   ProjectState,
   ProjectWorkspace,
+  RiskHistoryItem,
   Task,
 } from "@/lib/types";
 import {
@@ -66,6 +68,8 @@ export default function Overview({
   const pid = workspace.project.project_id;
   const { member } = useActingMember(workspace);
   const [state, setState] = useState<ProjectState | null>(null);
+  const [risks, setRisks] = useState<RiskHistoryItem[] | null>(null);
+  const [riskError, setRiskError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [evidenceFor, setEvidenceFor] = useState<string | null>(null);
@@ -77,8 +81,19 @@ export default function Overview({
         ? e.message
         : "Couldn't load project state.";
 
+  const loadRisks = useCallback(
+    () => listRisks(pid, { limit: 12 }).then(
+      (history) => {
+        setRisks(history);
+        setRiskError(null);
+      },
+      () => setRiskError("Risk history isn't available from the backend yet."),
+    ),
+    [pid],
+  );
+
   const refresh = useCallback(
-    () =>
+    () => Promise.all([
       getState(pid).then(
         (s) => {
           setState(s);
@@ -86,7 +101,9 @@ export default function Overview({
         },
         (e) => setError(describe(e))
       ),
-    [pid]
+      loadRisks(),
+    ]).then(() => undefined),
+    [pid, loadRisks]
   );
 
   // Initial load + re-analyze whenever the plan changes (mock recomputes).
@@ -101,10 +118,11 @@ export default function Overview({
       },
       (e) => !cancelled && setError(describe(e))
     );
+    void loadRisks();
     return () => {
       cancelled = true;
     };
-  }, [pid, workspace]);
+  }, [pid, workspace, loadRisks]);
 
   useEffect(() => {
     const id = setInterval(() => document.visibilityState === "visible" && refresh(), POLL_MS);
@@ -202,6 +220,8 @@ export default function Overview({
           )}
         </section>
 
+        <RiskHistory risks={risks} error={riskError} onRetry={loadRisks} />
+
         <LinkReview workspace={workspace} links={state?.pending_links ?? []}
           onReview={(l, status) => {
             if (!member) return needMember();
@@ -282,6 +302,50 @@ export default function Overview({
 
       {evidenceFor && <EvidenceDrawer workspace={workspace} taskId={evidenceFor} onClose={closeDrawer} />}
     </div>
+  );
+}
+
+function RiskHistory({ risks, error, onRetry }: { risks: RiskHistoryItem[] | null; error: string | null; onRetry: () => Promise<void> }) {
+  return (
+    <section className={boxCls}>
+      <div className={boxHeaderCls}>
+        <h2 className={boxTitleCls}>Recent risks</h2>
+        <span className="text-xs text-muted">Active and past issues</span>
+      </div>
+      {error && risks === null ? (
+        <div className="px-4 py-6 text-sm text-muted">
+          <p>{error}</p>
+          <button className="mt-2 text-link hover:underline" onClick={() => void onRetry()}>Try again</button>
+        </div>
+      ) : risks === null ? (
+        <div className="space-y-3 px-4 py-4" aria-label="Loading risk history" aria-busy="true">
+          {[1, 2, 3].map((item) => <div key={item} className="h-8 animate-pulse rounded bg-raised" />)}
+        </div>
+      ) : risks.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-muted">No risks have been detected for this project.</p>
+      ) : (
+        <ol>
+          {risks.map((risk) => {
+            const resolved = risk.status === "resolved";
+            const dismissed = risk.status === "dismissed";
+            return (
+              <li key={`${risk.kind}-${risk.risk_id}`} className="flex gap-3 border-b border-line px-4 py-3 last:border-b-0">
+                <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${resolved ? "bg-green" : dismissed ? "bg-muted" : "bg-yellow"}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    <p className="font-medium text-header">{risk.title}</p>
+                    <span className={`text-xs ${resolved ? "text-green" : "text-muted"}`}>
+                      {resolved ? `Resolved ${timeAgo(risk.resolved_at)}` : dismissed ? `Dismissed ${timeAgo(risk.resolved_at)}` : `Active · detected ${timeAgo(risk.detected_at)}`}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-sm text-muted">{risk.description}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
   );
 }
 

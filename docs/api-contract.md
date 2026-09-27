@@ -162,6 +162,35 @@ should render an unknown member id as "former member".
 
 → `204` · `404` unknown member (or a member of another project)
 
+### 2.9 ✅ `GET /projects/:projectId/messages`
+
+Shared project chat history, newest first. Query: `limit` (default 50, max
+100), `cursor` (the last `message_id` from the previous page).
+
+→ `200 Page<TeamMessage>` · `404` unknown project
+
+```ts
+interface TeamMessage {
+  message_id: string;
+  project_id: string;
+  sender_member_id: string | null;
+  sender_display_name: string; // snapshot retained after member removal
+  body: string;
+  created_at: string;
+}
+```
+
+### 2.10 ✅ `POST /projects/:projectId/messages`
+
+```ts
+{ member_id: string; body: string } // trimmed, 1–2000 characters
+```
+
+Only a current member of this project can send. The frontend refreshes the
+history periodically so teammates in separate sessions see new messages.
+
+→ `201 TeamMessage` · `400` invalid body or non-member · `404` unknown project
+
 ---
 
 ## 3. Plan — owner A

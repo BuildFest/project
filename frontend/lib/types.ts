@@ -38,6 +38,15 @@ export interface ProjectMember {
   joined_at: string;
 }
 
+export interface TeamMessage {
+  message_id: string;
+  project_id: string;
+  sender_member_id: string | null;
+  sender_display_name: string;
+  body: string;
+  created_at: string;
+}
+
 export interface ProjectBrief {
   project_id: string;
   content: string;

@@ -1,8 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { addMember, listEvents, removeMember, updateMember, type MemberInput } from "@/lib/api";
-import type { AccessLevel, ProjectMember, ProjectWorkspace } from "@/lib/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  addMember,
+  listEvents,
+  listTeamMessages,
+  removeMember,
+  sendTeamMessage,
+  updateMember,
+  type MemberInput,
+} from "@/lib/api";
+import { useActingMember } from "@/lib/actingAs";
+import type { AccessLevel, ProjectMember, ProjectWorkspace, TeamMessage } from "@/lib/types";
 import { buttonCls, inputCls, timeAgo } from "@/lib/ui";
 
 type MemberPatch = Partial<MemberInput>;
@@ -85,6 +94,8 @@ export default function TeamTab({
         )}
       </ul>
 
+      <TeamChat key={pid} workspace={workspace} />
+
       <section className="border-b border-line pt-6">
         <h3 className={sectionLabelCls}>Members · {members.length}</h3>
         {members.length > 0 && <ColumnHeader />}
@@ -134,6 +145,175 @@ export default function TeamTab({
 
       <p className="py-6 text-xs text-faint">Pit Crew tracks ownership for coordination. It never scores or ranks teammates.</p>
     </div>
+  );
+}
+
+// ---- project chat -------------------------------------------------------------
+
+const CHAT_PAGE_SIZE = 50;
+const CHAT_REFRESH_MS = 5_000;
+
+function mergeMessages(current: TeamMessage[], incoming: TeamMessage[]) {
+  const byId = new Map(current.map((message) => [message.message_id, message]));
+  for (const message of incoming) byId.set(message.message_id, message);
+  return [...byId.values()].sort(
+    (a, b) => b.created_at.localeCompare(a.created_at) || b.message_id.localeCompare(a.message_id)
+  );
+}
+
+function TeamChat({ workspace }: { workspace: ProjectWorkspace }) {
+  const pid = workspace.project.project_id;
+  const { member } = useActingMember(workspace);
+  const [messages, setMessages] = useState<TeamMessage[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  const latestMessageId = messages[0]?.message_id;
+
+  const refresh = useCallback(async (initial = false) => {
+    try {
+      const page = await listTeamMessages(pid, { limit: CHAT_PAGE_SIZE });
+      setMessages((current) => initial ? page.items : mergeMessages(current, page.items));
+      if (initial) setNextCursor(page.next_cursor);
+      setError(null);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      if (initial) setLoading(false);
+    }
+  }, [pid]);
+
+  useEffect(() => {
+    let active = true;
+    const initialTimer = window.setTimeout(() => {
+      if (active) void refresh(true);
+    }, 0);
+    const timer = window.setInterval(() => {
+      if (active && document.visibilityState === "visible") void refresh();
+    }, CHAT_REFRESH_MS);
+    return () => {
+      active = false;
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [refresh]);
+
+  // Keep the newest message visible. Loading older history does not change the
+  // newest id, so it does not pull someone away from what they were reading.
+  useEffect(() => {
+    if (latestMessageId) logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: loading ? "auto" : "smooth" });
+  }, [latestMessageId, loading]);
+
+  async function loadOlder() {
+    if (!nextCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const page = await listTeamMessages(pid, { limit: CHAT_PAGE_SIZE, cursor: nextCursor });
+      setMessages((current) => mergeMessages(current, page.items));
+      setNextCursor(page.next_cursor);
+      setError(null);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
+  async function send() {
+    const body = draft.trim();
+    if (!member || !body || sending) return;
+    setSending(true);
+    try {
+      const sent = await sendTeamMessage(pid, { member_id: member.member_id, body });
+      setMessages((current) => mergeMessages(current, [sent]));
+      setDraft("");
+      setError(null);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <section className="border-b border-line py-6">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className={sectionLabelCls}>Team chat</h3>
+          <p className="mt-1 text-sm text-muted">A shared project conversation, updated automatically across teammates.</p>
+        </div>
+        <span className="inline-flex items-center gap-2 text-xs text-muted">
+          <span className="h-2 w-2 rounded-full bg-green" aria-hidden />
+          Refreshes every 5 seconds
+        </span>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-line-strong bg-surface">
+        <div ref={logRef} role="log" aria-live="polite" aria-label="Team messages"
+          className="max-h-[26rem] min-h-52 overflow-y-auto px-4 py-4 sm:px-6">
+          {nextCursor && (
+            <div className="mb-4 text-center">
+              <button type="button" className="text-xs font-medium text-link hover:underline disabled:opacity-50"
+                disabled={loadingOlder} onClick={() => void loadOlder()}>
+                {loadingOlder ? "Loading older messages…" : "Load older messages"}
+              </button>
+            </div>
+          )}
+          {loading ? (
+            <p className="py-12 text-center text-sm text-muted" role="status">Loading team chat…</p>
+          ) : messages.length === 0 ? (
+            <div className="py-10 text-center">
+              <p className="font-medium text-header">Start the project conversation</p>
+              <p className="mt-1 text-sm text-muted">Messages are saved here so every teammate sees the same context.</p>
+            </div>
+          ) : (
+            <ol className="space-y-4">
+              {[...messages].reverse().map((message) => {
+                const own = message.sender_member_id === member?.member_id;
+                return (
+                  <li key={message.message_id} className={`flex ${own ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[85%] sm:max-w-[70%] ${own ? "text-right" : "text-left"}`}>
+                      <div className="mb-1 flex items-center gap-2 text-xs text-faint">
+                        {!own && <span className="font-semibold text-muted">{message.sender_display_name}</span>}
+                        <time dateTime={message.created_at} title={new Date(message.created_at).toLocaleString()}>
+                          {timeAgo(message.created_at)}
+                        </time>
+                        {own && <span className="font-semibold text-muted">You</span>}
+                      </div>
+                      <p className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-left text-sm ${
+                        own ? "bg-signal text-signal-ink" : "bg-raised text-text"
+                      }`}>{message.body}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+
+        <form className="border-t border-line px-4 py-3 sm:px-6" onSubmit={(event) => { event.preventDefault(); void send(); }}>
+          {error && <p className="mb-2 text-sm text-red" role="alert">{error}</p>}
+          <div className="flex items-end gap-2">
+            <label className="min-w-0 flex-1">
+              <span className="sr-only">Message the team</span>
+              <textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={2000} rows={2}
+                disabled={!member || sending} placeholder={member ? `Message as ${member.display_name}` : "Add a team member to start chatting"}
+                className={`${inputCls} block max-h-36 min-h-16 w-full resize-y`} />
+            </label>
+            <button className={buttonCls} disabled={!member || !draft.trim() || sending}>
+              {sending ? "Sending…" : "Send"}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-faint">
+            {member ? <>Sending as <span className="font-medium text-muted">{member.display_name}</span>. Change “Acting as” above to switch.</> : "Add a team member before sending."}
+          </p>
+        </form>
+      </div>
+    </section>
   );
 }
 

@@ -12,9 +12,11 @@ import type {
   ProjectWorkspace,
   Task,
   TaskDependency,
+  TeamMessage,
 } from "./types";
 
 const STORAGE_KEY = "pitcrew.mock.workspaces.v2";
+const MESSAGES_KEY = "pitcrew.mock.messages.v1";
 
 function newId(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 26).toUpperCase()}`;
@@ -609,6 +611,52 @@ export async function removeMember(projectId: string, memberId: string) {
     w.members = w.members.filter((m) => m.member_id !== memberId);
     for (const t of w.tasks) if (t.owner_member_id === memberId) t.owner_member_id = null;
   });
+}
+
+// ============================================================================
+// Project chat (mock). Real deployments persist these messages in Postgres.
+// ============================================================================
+
+function loadMessages(): TeamMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(MESSAGES_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveMessages(messages: TeamMessage[]) {
+  localStorage.setItem(MESSAGES_KEY, JSON.stringify(messages));
+}
+
+export async function listTeamMessages(
+  projectId: string,
+  opts: { limit?: number; cursor?: string | null } = {}
+): Promise<Page<TeamMessage>> {
+  const ordered = loadMessages()
+    .filter((message) => message.project_id === projectId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.message_id.localeCompare(a.message_id));
+  const cursorIndex = opts.cursor ? ordered.findIndex((message) => message.message_id === opts.cursor) : -1;
+  const start = cursorIndex >= 0 ? cursorIndex + 1 : 0;
+  const limit = Math.min(opts.limit ?? 50, 100);
+  const items = ordered.slice(start, start + limit);
+  return { items, next_cursor: ordered.length > start + limit ? items[items.length - 1]?.message_id ?? null : null };
+}
+
+export async function sendTeamMessage(projectId: string, input: { member_id: string; body: string }): Promise<TeamMessage> {
+  const member = (await getProject(projectId))?.members.find((candidate) => candidate.member_id === input.member_id);
+  if (!member) throw new Error("Choose a current team member before sending a message.");
+  const message: TeamMessage = {
+    message_id: newId("msg"),
+    project_id: projectId,
+    sender_member_id: member.member_id,
+    sender_display_name: member.display_name,
+    body: input.body.trim(),
+    created_at: new Date().toISOString(),
+  };
+  saveMessages([...loadMessages(), message]);
+  return message;
 }
 
 // Apply an accepted replan's operations to the plan (mock of §5.7 accept).

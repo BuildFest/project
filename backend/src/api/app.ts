@@ -10,6 +10,7 @@ import { registerAiRunRoutes } from "./aiRuns.js";
 import { logInternalError, registerFailureRoutes } from "./failures.js";
 import { registerBackfillRoutes } from "./backfill.js";
 import { registerBranchRoutes } from "./branches.js";
+import { registerChatRoutes } from "./chat.js";
 import { registerEventRoutes } from "./events.js";
 import { registerCorrectionRoutes } from "./corrections.js";
 import { notFound, parseBody } from "./http.js";
@@ -354,6 +355,10 @@ export function createApp(
   // ---- reported failures (src/api/failures.ts) -------------------------------
 
   registerFailureRoutes(app, db);
+
+  // ---- project team chat (src/api/chat.ts) ---------------------------------
+
+  registerChatRoutes(app, db);
 
   return app;
 }

@@ -33,6 +33,7 @@ import type {
   StatusMove,
   Task,
   TaskDependency,
+  TeamMessage,
   TimelineItem,
 } from "./types";
 
@@ -461,6 +462,25 @@ export async function removeMember(projectId: string, memberId: string) {
   if (usingMockApi) return mock.removeMember(projectId, memberId);
   await http("DELETE", `/projects/${enc(projectId)}/members/${enc(memberId)}`);
   return reload(projectId);
+}
+
+// ---- project team chat -------------------------------------------------------
+
+export async function listTeamMessages(
+  projectId: string,
+  opts: { limit?: number; cursor?: string | null } = {}
+): Promise<Page<TeamMessage>> {
+  if (usingMockApi) return mock.listTeamMessages(projectId, opts);
+  const q = new URLSearchParams();
+  if (opts.limit) q.set("limit", String(opts.limit));
+  if (opts.cursor) q.set("cursor", opts.cursor);
+  const qs = q.toString();
+  return http<Page<TeamMessage>>("GET", `/projects/${enc(projectId)}/messages${qs ? `?${qs}` : ""}`);
+}
+
+export async function sendTeamMessage(projectId: string, input: { member_id: string; body: string }): Promise<TeamMessage> {
+  if (usingMockApi) return mock.sendTeamMessage(projectId, input);
+  return http<TeamMessage>("POST", `/projects/${enc(projectId)}/messages`, input);
 }
 
 // ---- replan suggestions (contract §5.7) ----------------------------------------

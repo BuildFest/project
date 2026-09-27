@@ -157,6 +157,50 @@ describe("GET /projects/:projectId/state", () => {
   });
 });
 
+describe("GET /projects/:projectId/risks", () => {
+  it("returns unified risk lifecycles and links matching resolution events", async () => {
+    const s = await seedProject();
+    await addSignal(s, `sig_active${n}`, "active", [s.auth]);
+    await addSignal(s, `sig_resolved${n}`, "resolved", [s.dash]);
+    await pool.query(
+      `insert into collisions
+         (collision_id, project_id, repository_id, branch_a, branch_b, overlapping_files, status, detected_at, resolved_at)
+       values ($1, $2, $3, 'feature/a', 'feature/b', '{src/shared.ts}', 'resolved',
+               '2026-09-26T11:00:00Z', '2026-09-26T13:00:00Z')`,
+      [`col_resolved${n}`, s.project, s.repo],
+    );
+    await pool.query(
+      `insert into timeline_items
+         (item_id, project_id, occurred_at, kind, title, entity_type, entity_id)
+       values ($1, $3, '2026-09-26T10:00:00Z', 'signal_detected', 'Blocked', 'health_signal', $4),
+              ($2, $3, '2026-09-26T12:00:00Z', 'signal_resolved', 'Blocked resolved', 'health_signal', $4),
+              ($5, $3, '2026-09-26T13:00:00Z', 'collision_resolved', 'Collision resolved', 'collision', $6)`,
+      [`tl_detected${n}`, `tl_resolved${n}`, s.project, `sig_resolved${n}`, `tl_collision${n}`, `col_resolved${n}`],
+    );
+
+    const all = await get(`/projects/${s.project}/risks`);
+    expect(all.status).toBe(200);
+    expect(all.body).toHaveLength(3);
+    expect(all.body.find((risk: any) => risk.risk_id === `sig_resolved${n}`)).toMatchObject({
+      kind: "signal", status: "resolved", detection_event_id: `tl_detected${n}`,
+      resolution_event_id: `tl_resolved${n}`,
+    });
+    expect(all.body.find((risk: any) => risk.risk_id === `col_resolved${n}`)).toMatchObject({
+      kind: "collision", status: "resolved", resolution_event_id: `tl_collision${n}`,
+    });
+
+    const active = await get(`/projects/${s.project}/risks?status=active&limit=1`);
+    expect(active.body.map((risk: any) => risk.risk_id)).toEqual([`sig_active${n}`]);
+  });
+
+  it("validates filters and returns 404 for an unknown project", async () => {
+    const s = await seedProject();
+    expect((await get(`/projects/${s.project}/risks?status=unknown`)).status).toBe(400);
+    expect((await get(`/projects/${s.project}/risks?limit=0`)).status).toBe(400);
+    expect((await get("/projects/proj_missing/risks")).status).toBe(404);
+  });
+});
+
 describe("GET /projects/:projectId/tasks/:taskId/evidence", () => {
   it("returns 404 for an unknown project or task", async () => {
     const s = await seedProject();

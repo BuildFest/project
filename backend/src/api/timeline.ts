@@ -34,6 +34,16 @@ export function registerTimelineRoutes(app: Hono, db: Db) {
       params.push(q.task_id);
       where.push(`($${params.length} = any(t.related_task_ids) or $${params.length} = any(${LINKED_TASKS}))`);
     }
+    if (q.branch) {
+      params.push(q.branch);
+      where.push(`exists (
+        select 1 from github_events e
+         where t.entity_type = 'github_events'
+           and e.project_id = t.project_id
+           and e.event_id = t.entity_id
+           and e.branch = $${params.length}
+      )`);
+    }
     if (q.cursor) {
       params.push(q.cursor);
       where.push(

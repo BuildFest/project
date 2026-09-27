@@ -13,8 +13,10 @@ import type {
   ReplanSuggestion,
   ConnectRepositoryResult,
   Decision,
+  EventTaskLink,
   DeliveryRetryResult,
   Repository,
+  RiskHistoryItem,
   DerivedStatus,
   DerivedTaskState,
   MaintainerNote,
@@ -182,15 +184,21 @@ export async function listBranches(projectId: string): Promise<BranchState[]> {
 
 export async function listTimeline(
   projectId: string,
-  opts: { limit?: number; cursor?: string | null; task_id?: string } = {}
+  opts: { limit?: number; cursor?: string | null; task_id?: string; branch?: string } = {}
 ): Promise<Page<TimelineItem>> {
   if (usingMockApi) return activity.listTimeline(projectId, opts);
   const q = new URLSearchParams();
   if (opts.limit) q.set("limit", String(opts.limit));
   if (opts.cursor) q.set("cursor", opts.cursor);
   if (opts.task_id) q.set("task_id", opts.task_id);
+  if (opts.branch) q.set("branch", opts.branch);
   const qs = q.toString();
   return http<Page<TimelineItem>>("GET", `/projects/${enc(projectId)}/timeline${qs ? `?${qs}` : ""}`);
+}
+
+export async function listDecisions(projectId: string): Promise<Decision[]> {
+  if (usingMockApi) return activity.listDecisions(projectId);
+  return http<Decision[]>("GET", `/projects/${enc(projectId)}/decisions`);
 }
 
 export async function createDecision(
@@ -199,6 +207,25 @@ export async function createDecision(
 ): Promise<Decision> {
   if (usingMockApi) return activity.createDecision(projectId, input);
   return http<Decision>("POST", `/projects/${enc(projectId)}/decisions`, input);
+}
+
+export async function createManualLink(
+  projectId: string,
+  input: { event_id: string; task_id: string; member_id: string }
+): Promise<EventTaskLink> {
+  if (usingMockApi) {
+    return {
+      link_id: `link_${Date.now()}`,
+      project_id: projectId,
+      event_id: input.event_id,
+      task_id: input.task_id,
+      method: "manual",
+      confidence: 1,
+      status: "confirmed",
+      is_primary: false,
+    };
+  }
+  return http<EventTaskLink>("POST", `/projects/${enc(projectId)}/links`, input);
 }
 
 // ---- project intelligence (contract §5) --------------------------------------
@@ -217,6 +244,35 @@ export async function bootstrapPlanFromBrief(projectId: string, memberId: string
 export async function runPlanningAgent(projectId: string, memberId: string | null): Promise<PlanAgentResult> {
   if (usingMockApi) return { workspace: await mock.getProject(projectId) as ProjectWorkspace };
   return http<PlanAgentResult>("POST", `/projects/${enc(projectId)}/plan-agent/run`, { member_id: memberId });
+export async function listRisks(
+  projectId: string,
+  opts: { status?: "all" | "active" | "resolved" | "dismissed"; limit?: number } = {}
+): Promise<RiskHistoryItem[]> {
+  if (usingMockApi) {
+    const state = await analyzer.getState(projectId);
+    return [
+      ...state.signals.map((signal) => ({
+        risk_id: signal.signal_id, kind: "signal" as const, title: signal.title,
+        description: signal.explanation, status: signal.status, severity: signal.severity,
+        related_task_ids: signal.related_task_ids, detected_at: signal.detected_at,
+        resolved_at: signal.resolved_at, detection_event_id: null, resolution_event_id: null,
+      })),
+      ...state.collisions.map((collision) => ({
+        risk_id: collision.collision_id, kind: "collision" as const,
+        title: `Overlapping work on ${collision.branch_a} and ${collision.branch_b}`,
+        description: `${collision.overlapping_files.length} shared file${collision.overlapping_files.length === 1 ? "" : "s"}`,
+        status: collision.status, severity: "warning" as const,
+        related_task_ids: [collision.task_a_id, collision.task_b_id].filter((id): id is string => id !== null),
+        detected_at: collision.detected_at, resolved_at: collision.resolved_at,
+        detection_event_id: null, resolution_event_id: null,
+      })),
+    ].filter((risk) => !opts.status || opts.status === "all" || risk.status === opts.status).slice(0, opts.limit ?? 20);
+  }
+  const q = new URLSearchParams();
+  if (opts.status) q.set("status", opts.status);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return http<RiskHistoryItem[]>("GET", `/projects/${enc(projectId)}/risks${qs ? `?${qs}` : ""}`);
 }
 
 export async function getTaskEvidence(projectId: string, taskId: string): Promise<TaskEvidence> {

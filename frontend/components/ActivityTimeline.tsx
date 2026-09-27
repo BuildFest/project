@@ -469,7 +469,7 @@ function FailsList({ runs, reported, workspace, onLogged }: {
     {logOpen && <ReportFailureForm workspace={workspace} onSaved={async () => { setLogOpen(false); await onLogged(); }} onCancel={() => setLogOpen(false)} />}
 
     {entries.length === 0 ? (
-      <div className="py-16 text-center"><div className="mx-auto mb-3 h-8 w-px bg-line-strong" /><p className="font-medium text-header">No failures recorded</p><p className="mt-1 text-sm text-muted">Failed AI calls and unexpected API errors are logged automatically. Log a merge conflict or build/deploy failure above — those only a human sees.</p></div>
+      <div className="py-16 text-center"><div className="mx-auto mb-3 h-8 w-px bg-line-strong" /><p className="font-medium text-header">No failures recorded</p><p className="mx-auto mt-1 max-w-3xl text-sm text-muted">Automatic recording starts when this feature is deployed. Older merge conflicts and build/deploy failures were never stored; use Log a failure to backfill them. New failed AI calls and unexpected API errors appear automatically.</p></div>
     ) : groups.map((group) => <section key={group.label} className="border-b border-line py-6">
       <h3 className="mb-4 text-xs font-semibold uppercase tracking-[.14em] text-faint">{group.label}</h3>
       <ol className="space-y-4">{group.items.map((e) => e.kind === "ai" ? <FailRow key={e.id} run={e.run} /> : <ReportedFailRow key={e.id} failure={e.failure} workspace={workspace} />)}</ol>

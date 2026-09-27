@@ -1,3 +1,5 @@
+URL: https://pit-crew-jwspsp1m5-pranshulpamecha06-6875s-projects.vercel.app/
+
 # Pit Crew
 
 Pit Crew is a project-aware agent for small software teams. It connects the team's plan with real GitHub activity so everyone can see what changed, what may be blocked, and whether the project is still on track.

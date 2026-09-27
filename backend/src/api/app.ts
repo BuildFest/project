@@ -5,7 +5,8 @@ import { z } from "zod";
 import { withTransaction, type Db, type Queryable } from "../db.js";
 import { newId } from "../ids.js";
 import type { BranchRef } from "../ingestion/compare.js";
-import { pgErrorToHttp } from "./errors.js";
+import { aiErrorToHttp, pgErrorToHttp } from "./errors.js";
+import { registerAiRunRoutes } from "./aiRuns.js";
 import { registerBackfillRoutes } from "./backfill.js";
 import { registerBranchRoutes } from "./branches.js";
 import { registerEventRoutes } from "./events.js";
@@ -84,6 +85,11 @@ export function createApp(
   app.onError((err, c) => {
     if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
     if (err instanceof z.ZodError) return c.json({ error: "invalid request", issues: err.issues }, 400);
+    const aiMapped = aiErrorToHttp(err);
+    if (aiMapped) {
+      console.error(err);
+      return c.json(aiMapped.body, aiMapped.status);
+    }
     const mapped = pgErrorToHttp(err);
     if (mapped) return c.json(mapped.body, mapped.status);
     console.error(err);
@@ -330,6 +336,10 @@ export function createApp(
   // ---- timeline and decisions (src/api/timeline.ts) ------------------------
 
   registerTimelineRoutes(app, db);
+
+  // ---- AI run history / failures (src/api/aiRuns.ts) ------------------------
+
+  registerAiRunRoutes(app, db);
 
   return app;
 }

@@ -411,6 +411,27 @@ export interface PrNote {
   created_at: string;
 }
 
+// Contract §5.9 — every AI call the router makes, success or failure. Built
+// for the "Fails" view: the team's own record of every time an AI job broke,
+// for the Agentic Stress Test track (job/provider/model, how often, what
+// happened — the raw material for a Break Card).
+export interface AiRun {
+  run_id: string;
+  project_id: string | null;
+  job: string;
+  tier: "fast" | "smart" | null;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  cached: boolean;
+  status: "success" | "failed" | null;
+  error: string | null;
+  source_event_id: string | null;
+  created_at: string;
+}
+
 // Contract §6.2
 export interface Decision {
   decision_id: string;

@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, createDecision, createManualLink, listDecisions, listTimeline, usingMockApi } from "@/lib/api";
+import { ApiError, createDecision, createManualLink, listAiRuns, listDecisions, listTimeline, usingMockApi } from "@/lib/api";
 import { useActingMember } from "@/lib/actingAs";
-import type { Decision, ProjectWorkspace, TimelineItem, TimelineKind } from "@/lib/types";
+import type { AiRun, Decision, ProjectWorkspace, TimelineItem, TimelineKind } from "@/lib/types";
 import { buttonCls, ghostButtonCls, inputCls, timeAgo } from "@/lib/ui";
 
 const POLL_MS = 20_000;
-type Filter = "all" | "github" | "plan" | "risk" | "decision";
+type Filter = "all" | "github" | "plan" | "risk" | "decision" | "fails";
 
 const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: "all", label: "Everything" },
@@ -15,6 +15,7 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: "plan", label: "Planning" },
   { value: "risk", label: "Risks" },
   { value: "decision", label: "Decisions" },
+  { value: "fails", label: "Fails" },
 ];
 
 export default function ActivityTimeline({ workspace }: { workspace: ProjectWorkspace }) {
@@ -22,6 +23,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const { member } = useActingMember(workspace);
   const [items, setItems] = useState<TimelineItem[] | null>(null);
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [fails, setFails] = useState<AiRun[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [taskId, setTaskId] = useState("");
@@ -35,24 +37,31 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const [decisionTasks, setDecisionTasks] = useState<string[]>([]);
 
   const loadFirst = useCallback(async () => {
-    const [page, knownDecisions] = await Promise.all([
+    const [page, knownDecisions, failedRuns] = await Promise.all([
       listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
+      listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items, () => []),
     ]);
     setItems(page.items);
     setCursor(page.next_cursor);
     setDecisions(knownDecisions);
+    setFails(failedRuns);
     setError(null);
   }, [pid, taskId]);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listTimeline(pid, { task_id: taskId || undefined, limit: 50 }), listDecisions(pid)]).then(
-      ([page, knownDecisions]) => {
+    Promise.all([
+      listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
+      listDecisions(pid),
+      listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items, () => []),
+    ]).then(
+      ([page, knownDecisions, failedRuns]) => {
         if (cancelled) return;
         setItems(page.items);
         setCursor(page.next_cursor);
         setDecisions(knownDecisions);
+        setFails(failedRuns);
         setError(null);
       },
       (e) => !cancelled && setError(e instanceof Error ? e.message : "Couldn't load updates."),
@@ -135,8 +144,11 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line py-4">
       <div className="flex gap-5 overflow-x-auto">
         {FILTERS.map((option) => <button key={option.value} onClick={() => setFilter(option.value)}
-          className={`border-b-2 pb-1 text-sm ${filter === option.value ? "border-signal font-medium text-header" : "border-transparent text-muted hover:text-header"}`}>
+          className={`flex items-center gap-1.5 border-b-2 pb-1 text-sm ${filter === option.value ? "border-signal font-medium text-header" : "border-transparent text-muted hover:text-header"}`}>
           {option.label}
+          {option.value === "fails" && !!fails?.length && (
+            <span className="rounded-full bg-red/15 px-1.5 text-xs font-semibold text-red">{fails.length}</span>
+          )}
         </button>)}
       </div>
       <button className="text-xs text-muted hover:text-header" onClick={() => setMoreFilters((open) => !open)}>
@@ -152,7 +164,9 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
       {taskId && <button className="text-xs text-link hover:underline" onClick={() => setTaskId("")}>Clear filter</button>}
     </div>}
 
-    {items === null ? <Loading /> : groups.length === 0 ? <Empty hasItems={items.length > 0} filtered={filter !== "all" || !!taskId} /> : (
+    {filter === "fails" ? (
+      fails === null ? <Loading /> : <FailsList runs={fails} />
+    ) : items === null ? <Loading /> : groups.length === 0 ? <Empty hasItems={items.length > 0} filtered={filter !== "all" || !!taskId} /> : (
       <div>{groups.map((group) => <section key={group.label} className="border-b border-line py-6">
         <h3 className="mb-4 text-xs font-semibold uppercase tracking-[.14em] text-faint">{group.label}</h3>
         <ol>{group.items.map((item, index) => <EventRow key={item.item_id} item={item} first={index === 0} last={index === group.items.length - 1}
@@ -161,7 +175,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
       </section>)}</div>
     )}
 
-    {cursor && <div className="py-5 text-center"><button className={ghostButtonCls} disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "Loading…" : "Load older updates"}</button></div>}
+    {filter !== "fails" && cursor && <div className="py-5 text-center"><button className={ghostButtonCls} disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "Loading…" : "Load older updates"}</button></div>}
   </div>;
 }
 
@@ -339,6 +353,69 @@ function Loading() {
       <div className="space-y-6">{[1, 2, 3, 4].map((i) => <div key={i} className="flex gap-3"><span className="mt-1 h-2.5 w-2.5 animate-pulse rounded-full bg-raised" /><div className="flex-1 space-y-2"><div className="h-3 w-3/4 animate-pulse rounded bg-raised" /><div className="h-2.5 w-24 animate-pulse rounded bg-raised" /></div></div>)}</div>
     </div>
   </div>;
+}
+
+// Every AI call that failed (contract §5.9, backed by ai_runs): the team's
+// own record for the Agentic Stress Test track — what broke, how often,
+// which job/model, and the raw error each time.
+function FailsList({ runs }: { runs: AiRun[] }) {
+  if (runs.length === 0) {
+    return <div className="py-16 text-center"><div className="mx-auto mb-3 h-8 w-px bg-line-strong" /><p className="font-medium text-header">No failures recorded</p><p className="mt-1 text-sm text-muted">Every AI call the router makes — success or failure — is logged here.</p></div>;
+  }
+  const byJob = new Map<string, number>();
+  for (const r of runs) byJob.set(r.job, (byJob.get(r.job) ?? 0) + 1);
+  const groups = groupRunsByDay(runs);
+  return <div>
+    <div className="flex flex-wrap gap-2 border-b border-line py-4">
+      {[...byJob.entries()].sort((a, b) => b[1] - a[1]).map(([job, count]) => (
+        <span key={job} className="rounded-full border border-red/30 bg-red/5 px-2.5 py-1 text-xs text-red">{job} <span className="font-semibold">×{count}</span></span>
+      ))}
+    </div>
+    {groups.map((group) => <section key={group.label} className="border-b border-line py-6">
+      <h3 className="mb-4 text-xs font-semibold uppercase tracking-[.14em] text-faint">{group.label}</h3>
+      <ol className="space-y-4">{group.items.map((run) => <FailRow key={run.run_id} run={run} />)}</ol>
+    </section>)}
+  </div>;
+}
+
+function FailRow({ run }: { run: AiRun }) {
+  const [expanded, setExpanded] = useState(false);
+  const short = run.error && run.error.length > 160 ? `${run.error.slice(0, 160)}…` : run.error;
+  return <li className="grid grid-cols-[20px_minmax(0,1fr)] gap-2">
+    <span className="relative z-10 mt-[2px] grid h-[18px] w-[18px] place-items-center rounded-full bg-red text-[10px] font-bold leading-none text-bg" aria-hidden>!</span>
+    <article>
+      <div className="grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-baseline">
+        <div className="min-w-0">
+          <span className="mr-3 text-xs font-medium text-muted">{run.job}</span>
+          <span className="font-semibold text-header">{run.provider} · {run.model}</span>
+          {run.tier && <span className="ml-2 text-xs text-faint">{run.tier} tier</span>}
+        </div>
+        <time className="shrink-0 text-xs text-faint" dateTime={run.created_at} title={new Date(run.created_at).toLocaleString()}>{timeAgo(run.created_at)}</time>
+      </div>
+      <p className="mt-1.5 max-w-2xl whitespace-pre-wrap break-words rounded-md border border-red/20 bg-red/5 px-2.5 py-1.5 font-mono text-xs leading-5 text-red">
+        {expanded ? run.error : short}
+      </p>
+      <div className="mt-1 flex items-center gap-3 text-xs text-muted">
+        {run.error && run.error.length > 160 && (
+          <button className="font-medium hover:text-header" onClick={() => setExpanded((v) => !v)}>{expanded ? "Show less" : "Show full error"}</button>
+        )}
+        <span>{run.duration_ms}ms</span>
+        <span>{run.input_tokens + run.output_tokens} tokens</span>
+        {run.cached && <span>cached</span>}
+      </div>
+    </article>
+  </li>;
+}
+
+function groupRunsByDay(runs: AiRun[]) {
+  const groups: Array<{ label: string; items: AiRun[] }> = [];
+  for (const run of runs) {
+    const label = dayLabel(run.created_at);
+    const current = groups[groups.length - 1];
+    if (current?.label === label) current.items.push(run);
+    else groups.push({ label, items: [run] });
+  }
+  return groups;
 }
 
 function Empty({ hasItems, filtered }: { hasItems: boolean; filtered: boolean }) {

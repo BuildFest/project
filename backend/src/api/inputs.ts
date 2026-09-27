@@ -133,6 +133,12 @@ export const ListTimelineQuery = z.object({
   branch: z.string().min(1).optional(),
 });
 
+export const ListAiRunsQuery = z.object({
+  status: z.enum(["success", "failed"]).optional(),
+  limit: z.coerce.number().int().min(1).optional(),
+  cursor: z.string().min(1).optional(),
+});
+
 export const CreateDecisionInput = z.object({
   title: z.string().trim().min(1),
   body: z.string().nullable().default(null),

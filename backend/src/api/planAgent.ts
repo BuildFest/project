@@ -14,9 +14,14 @@ export function registerPlanAgentRoutes(app: Hono, db: Db, router: ModelRouter |
     const input = await parseBody(c, AgentInput);
     const projectId = c.req.param("projectId");
     const result = await bootstrapPlanFromBrief(db, router, projectId, input.member_id);
-    const analysis = await runAnalysis(db, router, projectId);
+    // The plan has already been committed at this point. A follow-up analysis
+    // failure must not turn a successful plan creation into a misleading 500.
+    const analysis = await runAnalysis(db, router, projectId).catch((error) => {
+      console.error("post-bootstrap analysis failed", { projectId, error });
+      return undefined;
+    });
     const [workspace] = await loadWorkspaces(db, [projectId]);
-    return c.json({ ...result, analysis, workspace }, 201);
+    return c.json({ ...result, ...(analysis ? { analysis } : {}), workspace }, 201);
   });
 
   app.post("/projects/:projectId/plan-agent/run", async (c) => {

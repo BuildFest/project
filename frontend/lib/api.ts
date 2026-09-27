@@ -8,6 +8,7 @@ import * as activity from "./mockActivity";
 import * as analyzer from "./mockAnalyzer";
 import * as mock from "./mockApi";
 import type {
+  AiRun,
   ApiErrorBody,
   BranchState,
   ReplanSuggestion,
@@ -348,6 +349,22 @@ export async function askPitCrew(projectId: string, question: string): Promise<M
 export async function listPrNotes(projectId: string, limit = 50): Promise<PrNote[]> {
   if (usingMockApi) return [];
   return http<PrNote[]>("GET", `/projects/${enc(projectId)}/pr-notes?limit=${limit}`);
+}
+
+// Every AI call the router makes, success or failure (contract §5.9) — the
+// "Fails" filter uses status=failed. No mock: there's nothing to demo without
+// a real model behind it.
+export async function listAiRuns(
+  projectId: string,
+  opts: { status?: "success" | "failed"; limit?: number; cursor?: string | null } = {}
+): Promise<Page<AiRun>> {
+  if (usingMockApi) return { items: [], next_cursor: null };
+  const q = new URLSearchParams();
+  if (opts.status) q.set("status", opts.status);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  if (opts.cursor) q.set("cursor", opts.cursor);
+  const qs = q.toString();
+  return http<Page<AiRun>>("GET", `/projects/${enc(projectId)}/ai-runs${qs ? `?${qs}` : ""}`);
 }
 
 // ---- repositories (contract §4.1–4.3) ----------------------------------------

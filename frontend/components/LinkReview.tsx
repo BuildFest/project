@@ -11,6 +11,7 @@ import { actorName, boxCls, boxHeaderCls, boxTitleCls, pillCls, smallButtonCls, 
 export type PendingLink = EventTaskLink & { event: GithubEvent };
 
 const CONFIDENT = 0.8;
+const PAGE_SIZE = 7;
 
 export default function LinkReview({
   workspace,
@@ -22,7 +23,11 @@ export default function LinkReview({
   onReview: (link: PendingLink, status: "confirmed" | "rejected") => Promise<unknown> | undefined;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   if (links.length === 0) return null;
+
+  const visibleLinks = links.slice(0, visibleCount);
+  const remaining = links.length - visibleLinks.length;
 
   async function review(l: PendingLink, status: "confirmed" | "rejected") {
     setBusy(l.link_id);
@@ -43,7 +48,7 @@ export default function LinkReview({
         <span className="text-xs text-muted">Pit Crew guessed which task this work belongs to</span>
       </div>
       <ul>
-        {links.map((l) => {
+        {visibleLinks.map((l) => {
           const task = workspace.tasks.find((t) => t.task_id === l.task_id);
           const counted = l.confidence >= CONFIDENT;
           return (
@@ -84,6 +89,20 @@ export default function LinkReview({
           );
         })}
       </ul>
+      {remaining > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+          <span className="text-xs text-muted">
+            Showing {visibleLinks.length} of {links.length}
+          </span>
+          <button
+            type="button"
+            className={smallButtonCls}
+            onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+          >
+            Load {Math.min(PAGE_SIZE, remaining)} more
+          </button>
+        </div>
+      )}
     </section>
   );
 }

@@ -49,11 +49,35 @@ export async function runAnalysis(db: Db, router: ModelRouter | null, projectId:
 
 export interface ScheduleAnalysisOptions { periodic?: boolean }
 
-export function createAnalysisScheduler(db: Db, router: ModelRouter | null, debounceMs = 2_000, maxConcurrent = 4) {
+export interface AnalysisSchedulerDeps {
+  debounceMs?: number;
+  maxConcurrent?: number;
+  // A floor on how often a project gets an AI-inclusive run (link suggestions,
+  // state review, replan generation), regardless of how often events trigger
+  // one. Every webhook event used to schedule a full AI pass after only a 2s
+  // debounce, so a burst of ordinary pushes during active development could
+  // hit the model dozens of times in a few minutes. A run that lands inside
+  // the cooldown still happens — it's just downgraded to the same rules-only
+  // pass a periodic sweep does, so the dashboard stays current without
+  // re-invoking the model. 0 disables the cap. Env: ANALYSIS_AI_MIN_INTERVAL_MS.
+  aiMinIntervalMs?: number;
+  now?: () => number;
+  run?: typeof runAnalysis;
+}
+
+export function createAnalysisScheduler(db: Db, router: ModelRouter | null, deps: AnalysisSchedulerDeps = {}) {
+  const {
+    debounceMs = 2_000,
+    maxConcurrent = 4,
+    aiMinIntervalMs = Number(process.env.ANALYSIS_AI_MIN_INTERVAL_MS ?? 300_000),
+    now = () => Date.now(),
+    run = runAnalysis,
+  } = deps;
   const timers = new Map<string, NodeJS.Timeout>();
   const pending = new Map<string, ScheduleAnalysisOptions>();
   const queued = new Map<string, ScheduleAnalysisOptions>();
   const running = new Set<string>();
+  const lastAiRunAt = new Map<string, number>();
   let active = 0;
   const pump = () => {
     while (active < maxConcurrent && queued.size > 0) {
@@ -63,9 +87,13 @@ export function createAnalysisScheduler(db: Db, router: ModelRouter | null, debo
       queued.delete(projectId);
       running.add(projectId);
       active++;
-      void runAnalysis(db, router, projectId, new Date(), {
-        skipLinking: options.periodic === true,
-        skipAi: options.periodic === true,
+      const lastAi = lastAiRunAt.get(projectId);
+      const cooling = aiMinIntervalMs > 0 && lastAi !== undefined && now() - lastAi < aiMinIntervalMs;
+      const skipAi = options.periodic === true || cooling;
+      if (!skipAi) lastAiRunAt.set(projectId, now());
+      void run(db, router, projectId, new Date(now()), {
+        skipLinking: skipAi,
+        skipAi,
       }).catch((error) => console.error("project analysis failed", { projectId, error }))
         .finally(() => {
           active--;

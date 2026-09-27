@@ -17,6 +17,8 @@ export interface ProjectSnapshot {
   storedStates: DerivedTaskState[];
   openSignals: StoredHealthSignal[];
   openCollisions: StoredCollision[];
+  // When the planning agent last moved task statuses; null = never.
+  planSyncedAt?: Date | null;
 }
 
 export async function loadProjectSnapshot(db: Queryable, projectId: string): Promise<ProjectSnapshot> {
@@ -25,11 +27,11 @@ export async function loadProjectSnapshot(db: Queryable, projectId: string): Pro
     [projectId],
   );
   if (!project.rows[0]) throw new Error(`project ${projectId} not found`);
-  const [repositories, milestones, tasks, dependencies, events, links, branches, states, signals, collisions] = await Promise.all([
+  const [repositories, milestones, tasks, dependencies, events, links, branches, states, signals, collisions, sync] = await Promise.all([
     db.query<Repository>("select repository_id, default_branch from repositories where project_id = $1", [projectId]),
     db.query<Milestone>("select milestone_id, name, target_at, archived from milestones where project_id = $1", [projectId]),
-    db.query<Task>(`select task_id, task_key, title, description, priority, scope, plan_status, milestone_id,
-                           target_at, created_at, archived from tasks where project_id = $1`, [projectId]),
+    db.query<Task>(`select task_id, task_key, title, description, priority, scope, plan_status, plan_status_set_by,
+                           milestone_id, target_at, created_at, archived from tasks where project_id = $1`, [projectId]),
     db.query<TaskDependency>("select task_id, depends_on_task_id from task_dependencies where project_id = $1", [projectId]),
     db.query<GithubEvent>(`select event_id, repository_id, event_type, actor, occurred_at, branch,
                                   commit, pull_request, changed_files from github_events
@@ -47,6 +49,7 @@ export async function loadProjectSnapshot(db: Queryable, projectId: string): Pro
     db.query<StoredCollision>(`select collision_id, repository_id, branch_a, branch_b, task_a_id, task_b_id,
                                       overlapping_files, status from collisions
                                  where project_id = $1 and status <> 'resolved'`, [projectId]),
+    db.query<{ synced_at: Date }>("select synced_at from plan_sync_state where project_id = $1", [projectId]),
   ]);
   return {
     project: project.rows[0], repositories: repositories.rows, milestones: milestones.rows,
@@ -54,5 +57,6 @@ export async function loadProjectSnapshot(db: Queryable, projectId: string): Pro
     branches: branches.rows,
     overrides: states.rows.filter((row) => row.override_status !== null).map((row) => ({ task_id: row.task_id, override_status: row.override_status! })),
     storedStates: states.rows, openSignals: signals.rows, openCollisions: collisions.rows,
+    planSyncedAt: sync.rows[0]?.synced_at ?? null,
   };
 }

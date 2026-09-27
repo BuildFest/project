@@ -134,10 +134,15 @@ create table tasks (
                             check (priority in ('critical', 'high', 'medium', 'low')),
   scope                   text not null default 'must_have'
                             check (scope in ('must_have', 'optional')),
-  -- Team-authored. Analyzers must never write this column (tech doc §5 rule 3);
-  -- their view of progress lives in derived_task_states.
+  -- Team-authored. Analyzers never write this column (tech doc §5 rule 3);
+  -- their view of progress lives in derived_task_states. The one exception is
+  -- the planning agent's forward-only, evidence-backed moves (plan_status_moves),
+  -- which it may make only while plan_status_set_by is null or 'agent'.
   plan_status             text not null default 'not_started'
                             check (plan_status in ('not_started', 'in_progress', 'blocked', 'complete', 'cancelled')),
+  -- Who last wrote plan_status: null (never changed), 'agent', or a person
+  -- (member_id, or 'team' when the request didn't say who).
+  plan_status_set_by      text,
   milestone_id            text,
   target_at               timestamptz,
   sort_order              integer not null default 0,
@@ -382,6 +387,33 @@ create unique index event_task_links_one_primary_uq on event_task_links (event_i
   where is_primary and status <> 'rejected';
 create index event_task_links_task_idx on event_task_links (task_id)
   where status <> 'rejected';
+
+-- Plan status changes the planning agent made on its own, with the evidence,
+-- so the team can see why and undo them. Undoing hands the status back to a person.
+create table plan_status_moves (
+  move_id            text primary key,
+  project_id         text not null,
+  task_id            text not null,
+  from_status        text not null check (from_status in ('not_started', 'in_progress')),
+  to_status          text not null check (to_status in ('in_progress', 'complete')),
+  reason             text not null,
+  evidence_event_ids text[] not null default '{}',
+  created_at         timestamptz not null default now(),
+  undone_by          text,
+  undone_at          timestamptz,
+  foreign key (project_id, task_id)
+    references tasks (project_id, task_id) on delete cascade,
+  check ((undone_by is null) = (undone_at is null))
+);
+
+create index plan_status_moves_project_idx on plan_status_moves (project_id, created_at desc);
+
+-- When the planning agent last synced each project's plan (it moves task
+-- statuses in batches every PLAN_SYNC_INTERVAL_HOURS, not on every event).
+create table plan_sync_state (
+  project_id text primary key references projects on delete cascade,
+  synced_at  timestamptz not null
+);
 
 create table derived_task_states (
   task_id            text primary key,

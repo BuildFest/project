@@ -8,7 +8,28 @@ import { maybeGenerateReplan, type ReplanGenerationResult } from "./replans.js";
 import { withAiProject } from "../ai/audit.js";
 import { notifyPendingPullRequests } from "./preMerge.js";
 
-export interface AnalysisRunOptions { skipLinking?: boolean; skipAi?: boolean }
+export interface AnalysisRunOptions {
+  skipLinking?: boolean;
+  skipAi?: boolean;
+  // Sync the plan now even if the last sync was recent (the "Run" button).
+  forcePlanSync?: boolean;
+}
+
+// The planning agent moves task statuses in batches, not on every event, so
+// the plan changes at a steady cadence. The background sweep picks up due
+// projects. Read at call time so tests and deploys can change it.
+const DEFAULT_PLAN_SYNC_HOURS = 3;
+export function planSyncIntervalMs(env: Record<string, string | undefined> = process.env): number {
+  const hours = Number(env.PLAN_SYNC_INTERVAL_HOURS ?? DEFAULT_PLAN_SYNC_HOURS);
+  return (Number.isFinite(hours) && hours >= 0 ? hours : DEFAULT_PLAN_SYNC_HOURS) * 3_600_000;
+}
+
+function planSyncDue(snapshot: ProjectSnapshot, now: Date, options: AnalysisRunOptions): boolean {
+  if (options.forcePlanSync) return true;
+  if (!snapshot.planSyncedAt) return true;
+  return now.getTime() - snapshot.planSyncedAt.getTime() >= planSyncIntervalMs();
+}
+
 export interface AnalysisRunResult extends PersistResult {
   aiApplied: boolean;
   aiError: string | null;
@@ -30,7 +51,8 @@ export async function runAnalysis(db: Db, router: ModelRouter | null, projectId:
     await lock.query("select pg_advisory_lock(hashtext('analysis:' || $1))", [projectId]);
     if (!options.skipLinking) await withAiProject(projectId, () => linkProjectEvents(db, router, projectId));
     snapshot = await loadProjectSnapshot(db, projectId);
-    result = await withAiProject(projectId, () => analyzeProject(snapshot, options.skipAi ? null : router, now));
+    const planSync = planSyncDue(snapshot, now, options);
+    result = await withAiProject(projectId, () => analyzeProject(snapshot, options.skipAi ? null : router, now, { planSync }));
     persisted = await withTransaction(db, (tx) => persistAnalysis(tx, projectId, snapshot, result));
     try {
       replan = await maybeGenerateReplan(db, options.skipAi ? null : router, projectId);

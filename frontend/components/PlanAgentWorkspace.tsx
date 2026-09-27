@@ -137,7 +137,7 @@ export default function PlanAgentWorkspace({
                   {busy === "sync" ? "Analyzing…" : "Sync timeline now"}
                 </button>
               )}
-              <span className="self-center text-xs text-muted">Automatic analysis also runs after new events and on the background sweep.</span>
+              <span className="self-center text-xs text-muted">Analysis runs after new events; the agent moves task statuses forward every few hours. You can undo any move from Updates.</span>
             </div>
           </div>
         </section>

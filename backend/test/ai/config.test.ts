@@ -7,8 +7,18 @@ describe("loadAiConfig", () => {
     expect(config.tiers.fast).toEqual({ provider: "groq", model: "llama-3.3-70b-versatile", apiKey: "g" });
     expect(config.tiers.smart.provider).toBe("anthropic");
     expect(config.tiers.smart.apiKey).toBe("a");
-    expect(config.jobs.link_suggestion).toBe("fast");
+    expect(config.jobs.diff_summary).toBe("fast");
+    expect(config.jobs.link_suggestion).toBe("smart");
     expect(config.jobs.replan).toBe("smart");
+  });
+
+  it("caps smart-tier linking per hour by default and lets env change or remove caps", () => {
+    expect(loadAiConfig({}).jobHourlyLimits).toEqual({ link_suggestion: 30 });
+    expect(loadAiConfig({ AI_JOB_LINK_SUGGESTION_PER_HOUR: "5", AI_JOB_REPLAN_PER_HOUR: "2" }).jobHourlyLimits)
+      .toEqual({ link_suggestion: 5, replan: 2 });
+    expect(loadAiConfig({ AI_JOB_LINK_SUGGESTION_PER_HOUR: "0" }).jobHourlyLimits).toEqual({});
+    expect(() => loadAiConfig({ AI_JOB_LINK_SUGGESTION_PER_HOUR: "-1" })).toThrow(/PER_HOUR/);
+    expect(() => loadAiConfig({ AI_JOB_LINK_SUGGESTION_PER_HOUR: "1.5" })).toThrow(/PER_HOUR/);
   });
 
   it("leaves the key null when it is not configured", () => {

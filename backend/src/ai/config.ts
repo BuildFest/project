@@ -26,6 +26,9 @@ export interface TierConfig {
 export interface AiConfig {
   tiers: Record<Tier, TierConfig>;
   jobs: Record<AiJob, Tier>;
+  // Most calls per rolling hour a job may send to its own tier; past that it
+  // runs on the next tier (smart -> fast). Jobs not listed are uncapped.
+  jobHourlyLimits: Partial<Record<AiJob, number>>;
   // Rough ceiling on tokens spent per process per UTC day. 0 disables the cap.
   dailyTokenBudget: number;
 }
@@ -44,13 +47,19 @@ const DEFAULT_TIERS: Record<Tier, { provider: ProviderName; model: string }> = {
 };
 
 const DEFAULT_JOBS: Record<AiJob, Tier> = {
-  link_suggestion: "fast",
+  // The smart tier (the Foundry agent in production) links events to tasks,
+  // capped by DEFAULT_JOB_HOURLY_LIMITS; the fast tier covers the overflow.
+  link_suggestion: "smart",
   diff_summary: "fast",
   state_review: "smart",
   pre_merge_review: "smart",
   replan: "smart",
   digest: "smart",
   ask: "smart",
+};
+
+const DEFAULT_JOB_HOURLY_LIMITS: Partial<Record<AiJob, number>> = {
+  link_suggestion: 30,
 };
 
 const PROVIDERS = Object.keys(API_KEY_ENV) as ProviderName[];
@@ -71,7 +80,8 @@ function parseTier(value: string | undefined, fallback: Tier): Tier {
 }
 
 // Env vars: AI_FAST_PROVIDER, AI_FAST_MODEL, AI_SMART_PROVIDER, AI_SMART_MODEL,
-// AI_JOB_<JOB>=fast|smart, AI_DAILY_TOKEN_BUDGET, and one API key per provider.
+// AI_JOB_<JOB>=fast|smart, AI_JOB_<JOB>_PER_HOUR (0 = uncapped),
+// AI_DAILY_TOKEN_BUDGET, and one API key per provider.
 export function loadAiConfig(env: Record<string, string | undefined> = process.env): AiConfig {
   const tiers = {} as Record<Tier, TierConfig>;
   for (const tier of TIERS) {
@@ -101,8 +111,18 @@ export function loadAiConfig(env: Record<string, string | undefined> = process.e
     jobs[job] = parseTier(env[`AI_JOB_${job.toUpperCase()}`], DEFAULT_JOBS[job]);
   }
 
+  const jobHourlyLimits: Partial<Record<AiJob, number>> = {};
+  for (const job of Object.keys(DEFAULT_JOBS) as AiJob[]) {
+    const name = `AI_JOB_${job.toUpperCase()}_PER_HOUR`;
+    const raw = env[name];
+    const limit = raw === undefined || raw === "" ? DEFAULT_JOB_HOURLY_LIMITS[job] : Number(raw);
+    if (limit === undefined) continue;
+    if (!Number.isInteger(limit) || limit < 0) throw new Error(`${name} must be a whole number >= 0`);
+    if (limit > 0) jobHourlyLimits[job] = limit;
+  }
+
   const budget = Number(env.AI_DAILY_TOKEN_BUDGET ?? 2_000_000);
   if (!Number.isFinite(budget) || budget < 0) throw new Error("AI_DAILY_TOKEN_BUDGET must be >= 0");
 
-  return { tiers, jobs, dailyTokenBudget: budget };
+  return { tiers, jobs, jobHourlyLimits, dailyTokenBudget: budget };
 }

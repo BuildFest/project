@@ -137,6 +137,9 @@ describe("linkProjectEvents", () => {
 
 async function seedRunnerProject() {
   const s = await seedProject();
+  // Synced just now, so these runs exercise the pipeline without the agent
+  // moving PC-1 (plan sync has its own tests in planSync.db.test.ts).
+  await pool.query("insert into plan_sync_state (project_id, synced_at) values ($1, '2026-09-26T13:00:00Z')", [s.project]);
   await pool.query("update tasks set archived=true where task_id=$1", [s.dash]);
   await pool.query("update tasks set plan_status='not_started', created_at='2026-09-26T10:00:00Z' where task_id=$1", [s.auth]);
   for (const [id, branch, hour] of [[`run_a${n}`, "pc-1-work", 11], [`run_b${n}`, "unkeyed-work", 12]] as const) {

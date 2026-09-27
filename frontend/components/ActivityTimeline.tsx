@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, createDecision, createManualLink, listDecisions, listTimeline, usingMockApi } from "@/lib/api";
+import { ApiError, createDecision, createManualLink, listDecisions, listStatusMoves, listTimeline, undoStatusMove, usingMockApi } from "@/lib/api";
 import { useActingMember } from "@/lib/actingAs";
-import type { Decision, ProjectWorkspace, TimelineItem, TimelineKind } from "@/lib/types";
-import { buttonCls, ghostButtonCls, inputCls, timeAgo } from "@/lib/ui";
+import type { Decision, ProjectWorkspace, StatusMove, TimelineItem, TimelineKind } from "@/lib/types";
+import { actorName, buttonCls, ghostButtonCls, inputCls, timeAgo } from "@/lib/ui";
 
 const POLL_MS = 20_000;
 type Filter = "all" | "github" | "plan" | "risk" | "decision";
@@ -22,6 +22,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const { member } = useActingMember(workspace);
   const [items, setItems] = useState<TimelineItem[] | null>(null);
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [moves, setMoves] = useState<StatusMove[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [taskId, setTaskId] = useState("");
@@ -35,24 +36,27 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const [decisionTasks, setDecisionTasks] = useState<string[]>([]);
 
   const loadFirst = useCallback(async () => {
-    const [page, knownDecisions] = await Promise.all([
+    const [page, knownDecisions, knownMoves] = await Promise.all([
       listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
+      listStatusMoves(pid).catch(() => [] as StatusMove[]),
     ]);
     setItems(page.items);
     setCursor(page.next_cursor);
     setDecisions(knownDecisions);
+    setMoves(knownMoves);
     setError(null);
   }, [pid, taskId]);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listTimeline(pid, { task_id: taskId || undefined, limit: 50 }), listDecisions(pid)]).then(
-      ([page, knownDecisions]) => {
+    Promise.all([listTimeline(pid, { task_id: taskId || undefined, limit: 50 }), listDecisions(pid), listStatusMoves(pid).catch(() => [] as StatusMove[])]).then(
+      ([page, knownDecisions, knownMoves]) => {
         if (cancelled) return;
         setItems(page.items);
         setCursor(page.next_cursor);
         setDecisions(knownDecisions);
+        setMoves(knownMoves);
         setError(null);
       },
       (e) => !cancelled && setError(e instanceof Error ? e.message : "Couldn't load updates."),
@@ -110,6 +114,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const visible = useMemo(() => summarizeUpdates((items ?? []).filter((item) => matches(item.kind, filter))), [items, filter]);
   const groups = useMemo(() => groupByDay(visible), [visible]);
   const decisionById = useMemo(() => new Map(decisions.map((d) => [d.decision_id, d])), [decisions]);
+  const moveById = useMemo(() => new Map(moves.map((m) => [m.move_id, m])), [moves]);
   const tasksById = useMemo(() => new Map(workspace.tasks.map((t) => [t.task_id, t])), [workspace.tasks]);
 
   return <div className="mx-auto max-w-5xl">
@@ -157,6 +162,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
         <h3 className="mb-4 text-xs font-semibold uppercase tracking-[.14em] text-faint">{group.label}</h3>
         <ol>{group.items.map((item, index) => <EventRow key={item.item_id} item={item} first={index === 0} last={index === group.items.length - 1}
           workspace={workspace} decision={decisionById.get(item.entity_id)}
+          move={item.entity_type === "plan_status_moves" ? moveById.get(item.entity_id) : undefined}
           tasksById={tasksById} onLinked={loadFirst} />)}</ol>
       </section>)}</div>
     )}
@@ -165,15 +171,28 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   </div>;
 }
 
-function EventRow({ item, first, last, workspace, decision, tasksById, onLinked }: {
-  item: TimelineItem; first: boolean; last: boolean; workspace: ProjectWorkspace; decision?: Decision;
+function EventRow({ item, first, last, workspace, decision, move, tasksById, onLinked }: {
+  item: TimelineItem; first: boolean; last: boolean; workspace: ProjectWorkspace; decision?: Decision; move?: StatusMove;
   tasksById: Map<string, ProjectWorkspace["tasks"][number]>; onLinked: () => Promise<void>;
 }) {
   const { member } = useActingMember(workspace);
   const [expanded, setExpanded] = useState(false);
   const [linkTask, setLinkTask] = useState("");
   const [busy, setBusy] = useState(false);
+  const [undoError, setUndoError] = useState<string | null>(null);
   const category = eventCategory(item.kind);
+
+  async function undo() {
+    if (!member || !move) return;
+    setBusy(true);
+    setUndoError(null);
+    try {
+      await undoStatusMove(workspace.project.project_id, move.move_id, member.member_id);
+      await onLinked();
+    } catch (e) {
+      setUndoError(e instanceof Error ? e.message : "Couldn't undo this change.");
+    } finally { setBusy(false); }
+  }
 
   async function link() {
     if (!member || !linkTask) return;
@@ -203,7 +222,13 @@ function EventRow({ item, first, last, workspace, decision, tasksById, onLinked 
       <div className="mt-1 flex items-center gap-2 text-xs text-muted">
         {grouped && <span>{grouped[1]} related changes</span>}
         {hasDetails && !expanded && <button className="font-medium hover:text-header" onClick={() => setExpanded(true)}>View context</button>}
+        {move && (move.undone_at
+          ? <span className="text-faint">Undone{move.undone_by ? ` by ${actorName(workspace, move.undone_by)}` : ""}</span>
+          : <button className="font-medium text-link hover:underline disabled:opacity-50" disabled={!member || busy}
+              title={member ? "Put the task back and leave its status to the team" : "Choose who you're acting as to undo"}
+              onClick={() => void undo()}>{busy ? "Undoing…" : "Undo"}</button>)}
       </div>
+      {undoError && <p className="mt-1 text-xs text-red" role="alert">{undoError}</p>}
       {expanded && <div className="mt-2 max-w-2xl border-l-2 border-line-strong py-0.5 pl-3">
         <div className="mb-1.5 flex items-center gap-3 text-xs">
           <span className="font-medium text-muted">Context</span>

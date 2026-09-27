@@ -44,6 +44,8 @@ export interface Task {
   priority: Priority;
   scope: Scope;
   plan_status: PlanStatus;
+  // Who last wrote plan_status (see AGENT_ACTOR in planSync.ts); null = never changed.
+  plan_status_set_by?: string | null;
   milestone_id: string | null;
   target_at: Date | null;
   created_at: Date;

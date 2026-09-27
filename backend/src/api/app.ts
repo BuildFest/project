@@ -39,6 +39,12 @@ import { loadWorkspaces } from "./workspace.js";
  * zod-parsed object (unknown keys stripped), and table/id column are literals
  * at every call site, so nothing user-controlled is interpolated.
  */
+// plan_status_set_by for a status written by a person when the request doesn't
+// say who. A task created as "not_started" is still the agent's to move.
+const HUMAN_STATUS_SETTER = "team";
+const humanStatusSetBy = (status: string | undefined) =>
+  status && status !== "not_started" ? HUMAN_STATUS_SETTER : null;
+
 async function updateRow(
   db: Queryable,
   table: "projects" | "project_members" | "milestones" | "tasks",
@@ -217,14 +223,14 @@ export function createApp(
       if (!task_key) notFound("project");
       const { rows } = await tx.query(
         `insert into tasks (task_id, task_key, project_id, title, description, owner_member_id, priority, scope,
-                            plan_status, milestone_id, target_at, sort_order)
+                            plan_status, milestone_id, target_at, sort_order, plan_status_set_by)
          values ($1, $2, $3, $4, $5, $6, coalesce($7, 'medium'), coalesce($8, 'must_have'),
-                 coalesce($9, 'not_started'), $10, $11, coalesce($12, 0))
+                 coalesce($9, 'not_started'), $10, $11, coalesce($12, 0), $13)
          returning *`,
         [
           newId("task"), task_key, projectId, input.title, input.description ?? null, input.owner_member_id ?? null,
           input.priority ?? null, input.scope ?? null, input.plan_status ?? null, input.milestone_id ?? null,
-          input.target_at ?? null, input.sort_order ?? null,
+          input.target_at ?? null, input.sort_order ?? null, humanStatusSetBy(input.plan_status),
         ],
       );
       return rows[0];
@@ -234,7 +240,9 @@ export function createApp(
 
   app.patch("/projects/:projectId/tasks/:taskId", async (c) => {
     const patch = await parseBody(c, UpdateTaskInput);
-    const row = await updateRow(db, "tasks", "task_id", c.req.param("projectId"), c.req.param("taskId"), patch);
+    // Any status a person writes is theirs: the planning agent won't move it again.
+    const withOwner = patch.plan_status === undefined ? patch : { ...patch, plan_status_set_by: HUMAN_STATUS_SETTER };
+    const row = await updateRow(db, "tasks", "task_id", c.req.param("projectId"), c.req.param("taskId"), withOwner);
     return c.json(row ?? notFound("task"));
   });
 

@@ -197,9 +197,13 @@ interface CreateTaskInput {
 ### 3.4 ✅ `PATCH /projects/:projectId/tasks/:taskId`
 Any `CreateTaskInput` field, plus `archived: boolean`. `task_key` is immutable.
 
-`plan_status` is **team-authored**. Only this endpoint (a human editing the
-plan) or an accepted replan (§5.7) may change it. Analyzers never do
-(tech doc §5 rule 3).
+`plan_status` is **team-authored**. This endpoint (a human editing the plan)
+and an accepted replan (§5.7) change it, and mark the task's
+`plan_status_set_by` as a person (`"team"` here, the accepting member for a
+replan). Analyzers never write it (tech doc §5 rule 3), with one exception: the
+planning agent's forward-only moves (§3.10), which it may only make while
+`plan_status_set_by` is `null` or `"agent"`. Once a person sets a status, the
+agent leaves it alone.
 
 → `200 Task` · `400` · `404`
 
@@ -249,14 +253,60 @@ suggestions instead of silently replacing team-authored work.
 
 ### 3.9 ✅ `POST /projects/:projectId/plan-agent/run`
 Runs event linking, derived-state analysis, health checks, collision detection,
-and replan generation immediately. Normal operation also schedules this work
-after ingested events and during the background project sweep.
+and replan generation immediately, and forces a plan sync (§3.10). Normal
+operation also schedules this work after ingested events and during the
+background project sweep. `bootstrap` (§3.8) forces a plan sync too.
 
 ```ts
 { member_id: string | null }
 ```
 
 → `200 { analysis, workspace }`
+
+### 3.10 ✅ Plan sync: agent status moves
+Every `PLAN_SYNC_INTERVAL_HOURS` (default 3), an analysis run also moves task
+statuses forward on its own, from strongly linked evidence:
+
+- `not_started` → `in_progress` when linked work exists (derived state in
+  progress, possibly blocked, or complete).
+- → `complete` when the task's merged PR is strongly linked and nothing newer
+  is open or active.
+
+"Strongly linked" means a confirmed link (task key, manual, or a teammate
+confirming) or an AI link with confidence ≥ 0.9. The agent never moves a task
+backwards, never touches `blocked`, `complete` or `cancelled`, skips tasks with
+a derived-state override, and skips any task whose `plan_status_set_by` is a
+person. Each move writes a `plan_status_moves` row and a `plan_change` timeline
+item (`entity_type: "plan_status_moves"`, `entity_id: move_id`), for example
+"Planning agent moved PC-6 to Complete". Health signals in the same run see the
+moved plan. Moves don't create plan versions.
+
+```ts
+interface StatusMove {
+  move_id: string; project_id: string; task_id: string;
+  from_status: "not_started" | "in_progress";
+  to_status: "in_progress" | "complete";
+  reason: string;               // "PR #12 was merged"
+  evidence_event_ids: string[];
+  created_at: string;
+  undone_by: string | null;     // member_id
+  undone_at: string | null;
+}
+```
+
+`GET /projects/:projectId/status-moves?limit=` → `200 StatusMove[]`, newest
+first (default 100, max 200) · `404` unknown project
+
+`POST /projects/:projectId/status-moves/:moveId/undo` with
+`{ member_id: string }` restores `from_status`, sets `plan_status_set_by` to
+that member (so the agent won't redo it), and adds a `plan_change` timeline item
+with `entity_type: "plan_status_move_undo"`.
+→ `200 StatusMove` · `400` `member_id` isn't in this project · `404` unknown
+move · `409` already undone, or the status changed since the agent moved it
+
+Event-to-task linking (§5.5) runs on the smart tier (the Foundry agent in
+production), capped at `AI_JOB_LINK_SUGGESTION_PER_HOUR` calls (default 30);
+past the cap, or when Foundry fails, the fast tier suggests links instead.
 
 ---
 

@@ -100,3 +100,60 @@ export interface TaskOverride {
   task_id: string;
   override_status: DerivedStatus;
 }
+
+export interface BranchState {
+  repository_id: string;
+  branch: string;
+  status: "active" | "merged" | "deleted";
+  task_id: string | null;
+  changed_files: string[];
+  open_pr_number: number | null;
+  last_activity_at: Date | null;
+}
+
+export interface StoredHealthSignal extends DesiredHealthSignal {
+  signal_id: string;
+  status: "active" | "dismissed";
+}
+
+export interface StoredCollision {
+  collision_id: string;
+  repository_id: string;
+  branch_a: string;
+  branch_b: string;
+  task_a_id: string | null;
+  task_b_id: string | null;
+  overlapping_files: string[];
+  status: "active" | "dismissed";
+}
+
+export interface DerivedTaskState {
+  task_id: string;
+  computed_status: DerivedStatus;
+  override_status: DerivedStatus | null;
+  effective_status: DerivedStatus;
+  confidence: number;
+  evidence_event_ids: string[];
+  last_activity_at: Date | null;
+  blocking_task_ids: string[];
+  explanation: string;
+  computation_method: "rules" | "llm" | "rules+llm";
+}
+
+export type HealthSignalType =
+  | "milestone_slipping"
+  | "dependency_incomplete"
+  | "must_have_no_activity"
+  | "plan_state_disagreement"
+  | "task_possibly_blocked";
+
+export interface DesiredHealthSignal {
+  type: HealthSignalType;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  explanation: string;
+  related_task_ids: string[];
+  related_milestone_ids: string[];
+  evidence_event_ids: string[];
+  fingerprint: string;
+}

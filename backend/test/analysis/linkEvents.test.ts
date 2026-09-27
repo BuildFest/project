@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { CompletionRequest, CompletionResult } from "../../src/ai/client.js";
 import type { ModelRouter } from "../../src/ai/router.js";
 import { linkProjectEvents } from "../../src/analysis/linkEvents.js";
+import { runAnalysis } from "../../src/analysis/runner.js";
 import { startTestDb } from "../db.js";
 
 let db: Awaited<ReturnType<typeof startTestDb>>;
@@ -131,5 +132,70 @@ describe("linkProjectEvents", () => {
     };
     const result = await linkProjectEvents(pool, failing, s.project);
     expect(result).toEqual({ keyOrInherited: 1, ai: 0, aiError: "groq down" });
+  });
+});
+
+async function seedRunnerProject() {
+  const s = await seedProject();
+  await pool.query("update tasks set archived=true where task_id=$1", [s.dash]);
+  await pool.query("update tasks set plan_status='not_started', created_at='2026-09-26T10:00:00Z' where task_id=$1", [s.auth]);
+  for (const [id, branch, hour] of [[`run_a${n}`, "pc-1-work", 11], [`run_b${n}`, "unkeyed-work", 12]] as const) {
+    await pool.query(`insert into github_events
+      (event_id,project_id,repository_id,source,external_event_id,event_type,occurred_at,branch,commit,changed_files)
+      values ($1,$2,$3,'backfill',$1,'push',$4,$5,$6,'{src/shared.ts}')`,
+      [id, s.project, s.repo, `2026-09-26T${hour}:00:00Z`, branch, { sha: id, message: "work" }]);
+    await pool.query(`insert into branch_states (repository_id,branch,project_id,status,head_sha,last_activity_at)
+                      values ($1,$2,$3,'active',$4,$5)`,
+      [s.repo, branch, s.project, id, `2026-09-26T${hour}:00:00Z`]);
+  }
+  return s;
+}
+
+describe("runAnalysis", () => {
+  it("serializes concurrent runs for the same project", async () => {
+    const s = await seedRunnerProject();
+    const runs = await Promise.all([
+      runAnalysis(pool, null, s.project, new Date("2026-09-26T13:00:00Z")),
+      runAnalysis(pool, null, s.project, new Date("2026-09-26T13:00:00Z")),
+    ]);
+    expect(runs.reduce((sum, run) => sum + run.states, 0)).toBe(1);
+    expect(runs.reduce((sum, run) => sum + run.collisions, 0)).toBe(1);
+    expect((await pool.query("select count(*)::int n from derived_task_states where project_id=$1", [s.project])).rows[0].n).toBe(1);
+  });
+
+  it("persists the complete pipeline and skips unchanged rows", async () => {
+    const s = await seedRunnerProject();
+    expect(await runAnalysis(pool, null, s.project, new Date("2026-09-26T13:00:00Z"))).toMatchObject({
+      branches: 2, states: 1, signals: 1, collisions: 1, aiApplied: false,
+    });
+    const { rows: branches } = await pool.query("select branch,task_id,changed_files,updated_at from branch_states where project_id=$1 order by branch", [s.project]);
+    expect(branches).toMatchObject([
+      { branch: "pc-1-work", task_id: s.auth, changed_files: ["src/shared.ts"] },
+      { branch: "unkeyed-work", task_id: null, changed_files: ["src/shared.ts"] },
+    ]);
+    expect((await pool.query("select computed_status,version from derived_task_states where task_id=$1", [s.auth])).rows[0]).toMatchObject({ computed_status: "in_progress", version: 1 });
+    expect((await pool.query("select count(*)::int n from collisions where project_id=$1 and status='active'", [s.project])).rows[0].n).toBe(1);
+
+    expect(await runAnalysis(pool, null, s.project, new Date("2026-09-26T13:01:00Z"))).toMatchObject({ branches: 0, states: 0, signals: 0, collisions: 0 });
+    expect((await pool.query("select version from derived_task_states where task_id=$1", [s.auth])).rows[0].version).toBe(1);
+    expect((await pool.query("select branch,updated_at from branch_states where project_id=$1 order by branch", [s.project])).rows)
+      .toEqual(branches.map(({ branch, updated_at }) => ({ branch, updated_at })));
+    expect((await pool.query("select count(*)::int n from timeline_items where project_id=$1", [s.project])).rows[0].n).toBe(2);
+  });
+
+  it("preserves dismissed conditions until they clear", async () => {
+    const s = await seedRunnerProject();
+    await runAnalysis(pool, null, s.project, new Date("2026-09-26T13:00:00Z"));
+    await pool.query("update health_signals set status='dismissed' where project_id=$1", [s.project]);
+    await pool.query("update collisions set status='dismissed' where project_id=$1", [s.project]);
+    await runAnalysis(pool, null, s.project, new Date("2026-09-26T13:01:00Z"));
+    expect((await pool.query("select distinct status from health_signals where project_id=$1", [s.project])).rows).toEqual([{ status: "dismissed" }]);
+    expect((await pool.query("select distinct status from collisions where project_id=$1", [s.project])).rows).toEqual([{ status: "dismissed" }]);
+
+    await pool.query("update tasks set plan_status='in_progress' where task_id=$1", [s.auth]);
+    await pool.query("update branch_states set status='merged' where project_id=$1 and branch='unkeyed-work'", [s.project]);
+    await runAnalysis(pool, null, s.project, new Date("2026-09-26T13:02:00Z"));
+    expect((await pool.query("select distinct status from health_signals where project_id=$1", [s.project])).rows).toEqual([{ status: "resolved" }]);
+    expect((await pool.query("select distinct status from collisions where project_id=$1", [s.project])).rows).toEqual([{ status: "resolved" }]);
   });
 });

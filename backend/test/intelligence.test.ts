@@ -2,23 +2,31 @@ import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/api/app.js";
 import { startTestDb } from "./db.js";
+import { startMaintainerDigests } from "../src/maintainer/service.js";
 
 let db: Awaited<ReturnType<typeof startTestDb>>;
 let pool: pg.Pool;
 let app: ReturnType<typeof createApp>;
 
 beforeAll(async () => {
+  process.env.ASK_RATE_LIMIT_PER_MINUTE = "2";
   db = await startTestDb();
   pool = db.pool;
   app = createApp(pool);
 }, 120_000);
 
 afterAll(async () => {
+  delete process.env.ASK_RATE_LIMIT_PER_MINUTE;
   await db?.stop();
 });
 
 async function get(path: string) {
   const res = await app.request(path);
+  return { status: res.status, body: await res.json() };
+}
+
+async function post(path: string, body?: unknown) {
+  const res = await app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json() };
 }
 
@@ -146,5 +154,125 @@ describe("GET /projects/:projectId/state", () => {
     ]);
     expect(body.pending_links[0].event.occurred_at).toBe("2026-09-26T11:00:00.000Z");
     expect(body.open_replans).toBe(1);
+  });
+});
+
+describe("GET /projects/:projectId/tasks/:taskId/evidence", () => {
+  it("returns 404 for an unknown project or task", async () => {
+    const s = await seedProject();
+    expect((await get(`/projects/proj_missing/tasks/${s.auth}/evidence`)).status).toBe(404);
+    expect((await get(`/projects/${s.project}/tasks/task_missing/evidence`)).status).toBe(404);
+
+    const other = await seedProject();
+    expect((await get(`/projects/${s.project}/tasks/${other.auth}/evidence`)).status).toBe(404);
+  });
+
+  it("returns empty evidence for a task that was never analyzed", async () => {
+    const s = await seedProject();
+    const res = await get(`/projects/${s.project}/tasks/${s.old}/evidence`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.task).toMatchObject({ task_id: s.old, archived: true });
+    expect(res.body.state).toBeNull();
+    expect(res.body.blocking_tasks).toEqual([]);
+    expect(res.body.links).toEqual([]);
+    expect(res.body.signals).toEqual([]);
+  });
+
+  it("returns current evidence with nested events in newest-first order", async () => {
+    const s = await seedProject();
+    await addState(s, s.auth, "complete", "2026-09-26T09:00:00Z");
+    await addState(s, s.dash, "possibly_blocked", "2026-09-26T12:00:00Z", [s.auth, "task_dangling"]);
+    await addEvent(s, `evt_old${n}`, "2026-09-26T10:00:00Z");
+    await addEvent(s, `evt_new${n}`, "2026-09-26T11:00:00Z");
+    await addEvent(s, `evt_rejected${n}`, "2026-09-26T09:00:00Z");
+    await pool.query(
+      `insert into event_task_links (link_id, project_id, event_id, task_id, method, confidence, status, reason) values
+         ($1, $5, $6, $8, 'manual', 1, 'confirmed', 'older proof'),
+         ($2, $5, $7, $8, 'llm', 0.9, 'suggested', 'newer proof'),
+         ($3, $5, $7, $9, 'manual', 1, 'confirmed', 'other task'),
+         ($4, $5, $10, $8, 'llm', 0.5, 'rejected', 'rejected proof')`,
+      [
+        `link_old${n}`, `link_new${n}`, `link_other${n}`, `link_rejected${n}`, s.project,
+        `evt_old${n}`, `evt_new${n}`, s.dash, s.auth, `evt_rejected${n}`,
+      ],
+    );
+    await addSignal(s, `sig_old${n}`, "active", [s.dash]);
+    await pool.query("update health_signals set detected_at = $2 where signal_id = $1", [`sig_old${n}`, "2026-09-26T12:00:00Z"]);
+    await addSignal(s, `sig_new${n}`, "active", [s.auth, s.dash]);
+    await pool.query("update health_signals set detected_at = $2 where signal_id = $1", [`sig_new${n}`, "2026-09-26T13:00:00Z"]);
+    await addSignal(s, `sig_resolved${n}`, "resolved", [s.dash]);
+    await addSignal(s, `sig_other${n}`, "active", [s.auth]);
+
+    const res = await get(`/projects/${s.project}/tasks/${s.dash}/evidence`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.task.task_id).toBe(s.dash);
+    expect(res.body.state).toMatchObject({ task_id: s.dash, effective_status: "possibly_blocked" });
+    expect(res.body.state.computed_at).toBe("2026-09-26T12:00:00.000Z");
+    expect(res.body.blocking_tasks).toHaveLength(1);
+    expect(res.body.blocking_tasks[0].task.task_id).toBe(s.auth);
+    expect(res.body.blocking_tasks[0].state).toMatchObject({ task_id: s.auth, effective_status: "complete" });
+    expect(res.body.links.map((link: any) => [link.link_id, link.reason, link.event.event_id])).toEqual([
+      [`link_new${n}`, "newer proof", `evt_new${n}`],
+      [`link_old${n}`, "older proof", `evt_old${n}`],
+    ]);
+    expect(res.body.links[0].event.occurred_at).toBe("2026-09-26T11:00:00.000Z");
+    expect(res.body.signals.map((signal: any) => signal.signal_id)).toEqual([`sig_new${n}`, `sig_old${n}`]);
+    expect(res.body.signals[0].detected_at).toBe("2026-09-26T13:00:00.000Z");
+  });
+});
+
+describe("Maintainer API", () => {
+  it("creates on-demand deterministic digests and lists notes without keys", async () => {
+    const s = await seedProject();
+    await addEvent(s, `evt_digest${n}`, "2026-09-26T12:00:00Z");
+    const created = await post(`/projects/${s.project}/maintainer/digest`);
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ project_id: s.project, kind: "digest", generated_by: "rules" });
+    expect(created.body.citations).toEqual([{ type: "event", id: `evt_digest${n}` }]);
+    const notes = await get(`/projects/${s.project}/maintainer/notes`);
+    expect(notes.body.map((note: any) => note.note_id)).toEqual([created.body.note_id]);
+  });
+
+  it("answers Ask Pit Crew with stored grounded fallback and validates input", async () => {
+    const s = await seedProject();
+    await addSignal(s, `sig_ask${n}`, "active", [s.auth]);
+    expect((await post(`/projects/${s.project}/ask`, { question: "?" })).status).toBe(400);
+    const answer = await post(`/projects/${s.project}/ask`, { question: "What needs attention?" });
+    expect(answer.status).toBe(201);
+    expect(answer.body).toMatchObject({ kind: "answer", question: "What needs attention?", generated_by: "rules" });
+    expect(answer.body.citations).toContainEqual({ type: "signal", id: `sig_ask${n}` });
+    expect(answer.body.body).toContain("What needs attention?");
+  });
+
+  it("rate limits Ask Pit Crew per project", async () => {
+    const first = await seedProject();
+    const second = await seedProject();
+    for (const question of ["First question", "Second question"]) {
+      expect((await post(`/projects/${first.project}/ask`, { question })).status).toBe(201);
+    }
+    const limited = await post(`/projects/${first.project}/ask`, { question: "Third question" });
+    expect(limited).toMatchObject({ status: 429, body: { error: "Ask Pit Crew rate limit exceeded" } });
+    expect((await post(`/projects/${second.project}/ask`, { question: "Independent project" })).status).toBe(201);
+  });
+
+  it("returns 404 for missing projects", async () => {
+    expect((await post("/projects/proj_missing/maintainer/digest")).status).toBe(404);
+    expect((await post("/projects/proj_missing/ask", { question: "What changed?" })).status).toBe(404);
+    expect((await get("/projects/proj_missing/maintainer/notes")).status).toBe(404);
+  });
+
+  it("runs an initial digest sweep without waiting for the interval", async () => {
+    const s = await seedProject();
+    const timer = startMaintainerDigests(pool, null, 1_000);
+    try {
+      let count = 0;
+      for (let attempt = 0; attempt < 50 && count === 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        count = (await pool.query("select count(*)::int n from maintainer_notes where project_id=$1 and kind='digest'", [s.project])).rows[0].n;
+      }
+      expect(count).toBe(1);
+    } finally { clearInterval(timer); }
   });
 });

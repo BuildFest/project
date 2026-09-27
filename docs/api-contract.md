@@ -311,6 +311,11 @@ Called by GitHub, not by the frontend. It takes the raw payload plus the
 `github_events` and update `branch_states`; other events are stored as
 `ignored`. Normalization runs inline in one transaction (cheap, no GitHub API
 calls). Analysis still happens after the response, never inline (tech doc §3).
+A debounced per-project runner performs task linking, branch derivation,
+rules and guarded AI review after commit. A 60-second sweep covers
+time-dependent health signals; `npm run analyze -- <projectId>` runs the same
+pipeline manually. AI credentials are optional and deterministic rules remain
+the fallback.
 A delivery that fails is stored as `failed` and GitHub's **Redeliver** retries it.
 
 ### 4.5 ✅ `GET /projects/:projectId/events`
@@ -358,6 +363,36 @@ caps the list at 300 files.
 
 These endpoints are proposed by A. B confirms or edits them in the PR.
 
+The Maintainer uses only read-only project tools and validates every cited
+task, event, signal, collision and replan ID. Model routing and daily budgets
+remain enforced by the shared router. Without configured model keys, digest
+and Q&A endpoints return deterministic grounded summaries.
+
+### 5.0 ✅ Maintainer and Ask Pit Crew
+
+- `POST /projects/:projectId/maintainer/digest` → `201 MaintainerNote`
+- `GET /projects/:projectId/maintainer/notes` → `200 MaintainerNote[]`
+- `POST /projects/:projectId/ask` `{ question: string }` → `201 MaintainerNote`
+
+`404` unknown project · `400` question under 2 or over 1000 chars · `429`
+Ask rate limit. POST responses also carry `error`: why the model fell back
+to rules, or `null`.
+
+Digests also run periodically for active projects. Answers and digests are
+notes only: they never mutate tasks, events, plan versions, or accept replans.
+An initial digest sweep runs at server startup; later sweeps use
+`MAINTAINER_DIGEST_MS` (six hours by default). Ask Pit Crew is limited per
+project to `ASK_RATE_LIMIT_PER_MINUTE` requests per minute (default 20, `0`
+disables the limit) and returns `429` when exceeded. Without model keys, Ask
+Pit Crew still answers the actual question by matching it to grounded task
+state, active risks, and recent repository events.
+
+Integration note: `ai_runs` uses the shared audit columns (`run_id`,
+`project_id`, `job`, provider/model/token/duration/error fields) plus optional
+`tier`, `cached`, `status`, and `source_event_id`. `maintainer_notes` is a
+common superset: digest/Ask rows use `kind`, `title`, `body`, `question`, and
+`citations`. Pre-merge notes live in their own `pr_notes` table (§5.8).
+
 ### 5.1 ✅ `GET /projects/:projectId/state`
 Everything the dashboard needs to paint the "plan vs reality" view in one
 call. The dashboard polls this. It only reads; it never triggers analysis.
@@ -382,7 +417,7 @@ already count toward the task's derived status (shown as AI-inferred), but they
 stay in the review queue until someone confirms or rejects them. Each link has
 a `reason: string | null` explaining why it was made.
 
-### 5.2 📝 `GET /projects/:projectId/tasks/:taskId/evidence`
+### 5.2 ✅ `GET /projects/:projectId/tasks/:taskId/evidence`
 Answers "why does Pit Crew believe this?" (tech doc §17).
 
 ```ts
@@ -396,7 +431,10 @@ interface TaskEvidence {
 ```
 → `200 TaskEvidence` · `404`
 
-### 5.3 📝 `PUT /projects/:projectId/tasks/:taskId/override`
+`blocking_tasks` follows `state.blocking_task_ids` order and omits IDs that no
+longer resolve to a task in the project. `links` and `signals` are newest first.
+
+### 5.3 ✅ `PUT /projects/:projectId/tasks/:taskId/override`
 A human corrects the derived status. `effective_status` changes at once, while
 `computed_status` is kept (tech doc §13).
 
@@ -409,11 +447,11 @@ state so the UI can re-confirm.
 
 → `200 DerivedTaskState` · `409 { error, current: DerivedTaskState }`
 
-### 5.4 📝 `DELETE /projects/:projectId/tasks/:taskId/override`
+### 5.4 ✅ `DELETE /projects/:projectId/tasks/:taskId/override`
 Clears the override. `effective_status` falls back to `computed_status`.
 → `200 DerivedTaskState`
 
-### 5.5 📝 Event–task links
+### 5.5 ✅ Event–task links
 - `POST /projects/:projectId/links`. A human links an event to a task:
   `{ event_id, task_id, member_id }` → `201 EventTaskLink` (`method: "manual"`, `status: "confirmed"`)
 - `PATCH /projects/:projectId/links/:linkId`. Confirms or rejects a suggestion:
@@ -422,7 +460,7 @@ Clears the override. `effective_status` falls back to `computed_status`.
 An `llm` link can only become `confirmed` through this endpoint. The
 database rejects a confirmation without a confirmer.
 
-### 5.6 📝 Dismiss a signal or collision
+### 5.6 ✅ Dismiss a signal or collision
 - `PATCH /projects/:projectId/signals/:signalId` `{ status: "dismissed", member_id }` → `200 HealthSignal`
 - `PATCH /projects/:projectId/collisions/:collisionId` `{ status: "dismissed", member_id }` → `200 Collision`
 
@@ -454,6 +492,13 @@ them, and FE renders them, so all sides need the same list. Field values follow
 the same rules as the plan endpoints (§3), validated by
 `backend/src/api/planChanges.ts`:
 
+The analyzer may create at most one `proposed` suggestion for the current plan
+version when active milestone-slipping or incomplete-dependency signals exist.
+Generation never applies changes: only the accept endpoint mutates the plan.
+Repeated analysis with the same plan version and signal set does not create a
+duplicate; proposals based on an older plan version become `superseded`.
+
+
 ```ts
 type PlanChange =
   | { op: "update_task"; task_id: string; changes: Partial<CreateTaskInput> }
@@ -462,6 +507,18 @@ type PlanChange =
   | { op: "remove_dependency"; task_id: string; depends_on_task_id: string }
   | { op: "update_milestone"; milestone_id: string; changes: { target_at?: string | null; name?: string } };
 ```
+
+### 5.8 ✅ `GET /projects/:projectId/pr-notes`
+
+Returns the newest pre-merge coordination notes for the dashboard. These notes
+cover collision risk, incomplete dependencies, task scope and plan alignment;
+they are not code-quality reviews. Query: `limit?` (default 50, max 200).
+
+Each row includes `pull_request_number`, `branch`, optional `task_id`, `note`,
+the grounded `facts`, `evidence_event_ids`, and `generated_by` (`rules` or
+`llm`). One note is stored per PR opened, updated or reopened event.
+
+→ `200 PrNote[]` · `404`
 
 ---
 
@@ -491,9 +548,6 @@ so `related_task_ids` in the response is always current.
 → `200 Decision[]` (newest first) / `201 Decision` · `400` member or tasks
 not in this project · `404` unknown project. Each decision also adds a
 `decision` timeline item.
-
-`Decision` isn't in `types.ts` yet. Its fields are `decision_id`, `project_id`,
-`title`, `body`, `decided_by`, `decided_at`, `related_task_ids`, `suggestion_id`.
 
 ---
 

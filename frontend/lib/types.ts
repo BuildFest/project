@@ -319,6 +319,61 @@ export interface TaskEvidence {
   signals: HealthSignal[]; // active, mentioning this task
 }
 
+// Contract §5.0 — digests and Ask Pit Crew answers. Notes only; they never
+// change the plan.
+export interface MaintainerCitation {
+  type: "task" | "event" | "signal" | "collision" | "replan";
+  id: string;
+}
+
+export interface MaintainerNote {
+  note_id: string;
+  project_id: string;
+  kind: "digest" | "answer";
+  title: string;
+  body: string;
+  question: string | null; // set on answers
+  citations: MaintainerCitation[];
+  generated_by: "rules" | "llm";
+  created_at: string;
+  error?: string | null; // POST responses only: why the model fell back to rules
+}
+
+// Contract §5.8 — pre-merge coordination notes, one per PR opened/updated/reopened.
+export interface CoordinationFact {
+  id: string;
+  kind: "collision_risk" | "incomplete_dependency" | "scope" | "plan_signal";
+  summary: string;
+  evidence_event_ids: string[];
+}
+
+export interface PrNote {
+  note_id: string;
+  project_id: string;
+  repository_id: string;
+  source_event_id: string;
+  pull_request_number: number;
+  branch: string;
+  task_id: string | null;
+  note: string;
+  facts: CoordinationFact[];
+  evidence_event_ids: string[];
+  generated_by: "rules" | "llm";
+  created_at: string;
+}
+
+// Contract §6.2
+export interface Decision {
+  decision_id: string;
+  project_id: string;
+  title: string;
+  body: string | null;
+  decided_by: string | null; // member_id
+  decided_at: string;
+  related_task_ids: string[];
+  suggestion_id: string | null; // set when the decision came from a replan
+}
+
 // Contract §4.1 — returned once when a repository is connected.
 export interface ConnectRepositoryResult {
   repository: Repository;

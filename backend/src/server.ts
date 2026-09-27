@@ -4,12 +4,14 @@ import { loadEnvFile } from "node:process";
 import { serve } from "@hono/node-server";
 import { loadAiConfig } from "./ai/config.js";
 import { createModelRouter } from "./ai/router.js";
-import { linkProjectEvents } from "./analysis/linkEvents.js";
+import { createAiRunLogger } from "./ai/audit.js";
+import { createAnalysisScheduler, startAnalysisSweep } from "./analysis/runner.js";
 import { createApp } from "./api/app.js";
 import { requireEnv } from "./config.js";
 import { createPool } from "./db.js";
 import { createCompareScheduler } from "./ingestion/compare.js";
 import { projectEventsToTimeline } from "./ingestion/timeline.js";
+import { startMaintainerDigests } from "./maintainer/service.js";
 
 // Railway supplies environment variables directly; local development uses
 // backend/.env when present. The file is gitignored.
@@ -23,16 +25,11 @@ if (process.env.NODE_ENV === "production") requireEnv("PUBLIC_BASE_URL");
 
 const port = Number(process.env.PORT ?? 8787);
 const db = createPool();
-const router = createModelRouter(loadAiConfig());
-const analyzeProjects = (projectIds: string[]) => {
-  for (const projectId of projectIds) {
-    setImmediate(() => {
-      void linkProjectEvents(db, router, projectId).catch((error) => {
-        console.error("task linking failed", { projectId, error });
-      });
-    });
-  }
-};
+const router = createModelRouter(loadAiConfig(), { onRun: createAiRunLogger(db) });
+const scheduleAnalysis = createAnalysisScheduler(db, router);
+startAnalysisSweep(db, scheduleAnalysis);
+startMaintainerDigests(db, router);
+const analyzeProjects = (projectIds: string[]) => projectIds.forEach((projectId) => scheduleAnalysis(projectId));
 
 // After each push to a feature branch, recompute its changed files (debounced).
 const refreshBranches = createCompareScheduler(db);
@@ -43,6 +40,6 @@ void projectEventsToTimeline(db)
   .then((n) => n > 0 && console.log(`timeline: projected ${n} earlier events`))
   .catch((error) => console.error("timeline catch-up failed", error));
 
-serve({ fetch: createApp(db, analyzeProjects, refreshBranches).fetch, port }, (info) => {
+serve({ fetch: createApp(db, analyzeProjects, refreshBranches, router).fetch, port }, (info) => {
   console.log(`Pit Crew API listening on port ${info.port}`);
 });

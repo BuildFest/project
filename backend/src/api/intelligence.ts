@@ -15,6 +15,15 @@ export interface ProjectState {
   open_replans: number;
 }
 
+// Matches TaskEvidence in docs/api-contract.md §5.2.
+export interface TaskEvidence {
+  task: Row;
+  state: Row | null;
+  blocking_tasks: Array<{ task: Row; state: Row | null }>;
+  links: Row[];
+  signals: Row[];
+}
+
 // Attaches each link's github_events row as `event`. A second query rather
 // than to_jsonb() so timestamps serialize the same way as every other response.
 async function withEvents(db: Queryable, projectId: string, links: Row[]): Promise<Row[]> {
@@ -74,9 +83,80 @@ export async function loadProjectState(db: Queryable, projectId: string): Promis
   };
 }
 
+// Loads the rows behind the evidence drawer without triggering analysis.
+// Sequential queries: db may be a single transaction client.
+export async function loadTaskEvidence(
+  db: Queryable,
+  projectId: string,
+  taskId: string,
+): Promise<TaskEvidence | null> {
+  const task = await db.query("select * from tasks where project_id = $1 and task_id = $2", [projectId, taskId]);
+  if (task.rowCount === 0) return null;
+
+  const state = await db.query(
+    "select * from derived_task_states where project_id = $1 and task_id = $2",
+    [projectId, taskId],
+  );
+  const currentState = state.rows[0] ?? null;
+  const blockingIds: string[] = currentState?.blocking_task_ids ?? [];
+  let blockingTasks: Array<{ task: Row; state: Row | null }> = [];
+  if (blockingIds.length > 0) {
+    const tasks = await db.query(
+      "select * from tasks where project_id = $1 and task_id = any($2)",
+      [projectId, blockingIds],
+    );
+    const states = await db.query(
+      "select * from derived_task_states where project_id = $1 and task_id = any($2)",
+      [projectId, blockingIds],
+    );
+    const tasksById = new Map(tasks.rows.map((row) => [row.task_id, row]));
+    const statesById = new Map(states.rows.map((row) => [row.task_id, row]));
+    blockingTasks = blockingIds
+      .filter((id) => tasksById.has(id))
+      .map((id) => ({ task: tasksById.get(id)!, state: statesById.get(id) ?? null }));
+  }
+
+  const links = await db.query(
+    "select * from event_task_links where project_id = $1 and task_id = $2 and status <> 'rejected'",
+    [projectId, taskId],
+  );
+  const signals = await db.query(
+    `select * from health_signals
+      where project_id = $1 and status = 'active' and related_task_ids @> array[$2]::text[]
+      order by detected_at desc`,
+    [projectId, taskId],
+  );
+
+  return {
+    task: task.rows[0],
+    state: currentState,
+    blocking_tasks: blockingTasks,
+    links: await withEvents(db, projectId, links.rows),
+    signals: signals.rows,
+  };
+}
+
 export function registerIntelligenceRoutes(app: Hono, db: Db) {
   app.get("/projects/:projectId/state", async (c) => {
     const state = await loadProjectState(db, c.req.param("projectId"));
     return c.json(state ?? notFound("project"));
+  });
+
+  app.get("/projects/:projectId/tasks/:taskId/evidence", async (c) => {
+    const evidence = await loadTaskEvidence(db, c.req.param("projectId"), c.req.param("taskId"));
+    return c.json(evidence ?? notFound("task"));
+  });
+
+  app.get("/projects/:projectId/pr-notes", async (c) => {
+    const projectId = c.req.param("projectId");
+    const project = await db.query("select 1 from projects where project_id=$1", [projectId]);
+    if (!project.rowCount) return notFound("project");
+    const requested = Number(c.req.query("limit") ?? 50);
+    const limit = Number.isInteger(requested) && requested > 0 ? Math.min(requested, 200) : 50;
+    const { rows } = await db.query(
+      `select * from pr_notes where project_id=$1 order by created_at desc,note_id desc limit $2`,
+      [projectId, limit],
+    );
+    return c.json(rows);
   });
 }

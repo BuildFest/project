@@ -10,6 +10,7 @@ import type {
   ApiErrorBody,
   ReplanSuggestion,
   ConnectRepositoryResult,
+  DeliveryRetryResult,
   Repository,
   DerivedStatus,
   DerivedTaskState,
@@ -229,7 +230,27 @@ export async function startBackfill(projectId: string, repositoryId: string): Pr
   return http("POST", `/projects/${enc(projectId)}/repositories/${enc(repositoryId)}/backfill`);
 }
 
-// ---- team members (contract §2.6–2.7; remove is not in the contract yet) ------
+// Re-runs deliveries GitHub sent that failed processing (contract §4.7).
+export async function retryFailedDeliveries(projectId: string, repositoryId: string): Promise<DeliveryRetryResult> {
+  if (usingMockApi) return mock.retryFailedDeliveries(projectId, repositoryId);
+  return http("POST", `/projects/${enc(projectId)}/repositories/${enc(repositoryId)}/deliveries/retry`);
+}
+
+// ---- plan versions (contract §3.7) -------------------------------------------
+
+// "Save plan": snapshots the current plan as the next version. Replan
+// suggestions are always relative to a saved version, so none appear until
+// the first save.
+export async function savePlanVersion(projectId: string, input: { summary?: string; member_id?: string | null }) {
+  if (usingMockApi) return mock.savePlanVersion(projectId);
+  await http("POST", `/projects/${enc(projectId)}/plan-versions`, {
+    summary: input.summary?.trim() || null,
+    member_id: input.member_id ?? null,
+  });
+  return reload(projectId);
+}
+
+// ---- team members (contract §2.6–2.8) ------------------------------------------
 
 export async function addMember(projectId: string, input: MemberInput) {
   if (usingMockApi) return mock.addMember(projectId, input);
@@ -245,14 +266,7 @@ export async function updateMember(projectId: string, memberId: string, patch: P
 
 export async function removeMember(projectId: string, memberId: string) {
   if (usingMockApi) return mock.removeMember(projectId, memberId);
-  try {
-    await http("DELETE", `/projects/${enc(projectId)}/members/${enc(memberId)}`);
-  } catch (e) {
-    if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
-      throw new ApiError("Removing members isn't supported by the backend yet.", e.status);
-    }
-    throw e;
-  }
+  await http("DELETE", `/projects/${enc(projectId)}/members/${enc(memberId)}`);
   return reload(projectId);
 }
 

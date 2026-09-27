@@ -104,6 +104,20 @@ export interface Repository {
   connected_at: string | null;
   last_backfill_at: string | null;
   last_event_at: string | null;
+  // Ingestion health, computed by the backend on read (contract §4.2).
+  // Optional: repositories saved by older mock data don't have them.
+  last_delivery_at?: string | null;
+  failed_deliveries?: number;
+  ingestion_health?: "waiting" | "live" | "degraded";
+  // Latest history import (contract §4.3); null = never run.
+  backfill_status?: "running" | "succeeded" | "partial" | "failed" | null;
+  backfill_error?: string | null;
+}
+
+export interface DeliveryRetryResult {
+  retried: number;
+  succeeded: number;
+  still_failed: number;
 }
 
 export type GithubEventType =

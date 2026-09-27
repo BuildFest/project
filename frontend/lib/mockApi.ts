@@ -482,9 +482,26 @@ export async function connectRepository(projectId: string, fullName: string) {
 export async function startBackfill(projectId: string, repositoryId: string) {
   const all = loadRepos();
   const r = (all[projectId] ?? []).find((x) => x.repository_id === repositoryId);
-  if (r) r.last_backfill_at = new Date().toISOString();
+  if (r) {
+    r.last_backfill_at = new Date().toISOString();
+    r.backfill_status = "succeeded";
+    r.backfill_error = null;
+  }
   localStorage.setItem(REPOS_KEY, JSON.stringify(all));
   return { started_at: new Date().toISOString() };
+}
+
+// The mock never fails a delivery, so there's never anything to retry.
+export async function retryFailedDeliveries(projectId: string, repositoryId: string) {
+  void projectId;
+  void repositoryId;
+  return { retried: 0, succeeded: 0, still_failed: 0 };
+}
+
+export async function savePlanVersion(projectId: string) {
+  return mutate(projectId, (w) => {
+    w.project.current_plan_version = (w.project.current_plan_version ?? 0) + 1;
+  });
 }
 
 // ============================================================================

@@ -47,6 +47,7 @@ import {
 } from "./Icons";
 import EvidenceDrawer from "./EvidenceDrawer";
 import RepositoryPanel from "./repo/RepositoryPanel";
+import ReplanPanel from "./ReplanPanel";
 import StatusBadge from "./StatusBadge";
 
 const POLL_MS = 10_000; // contract §1: dashboard polls /state about every 10 s
@@ -198,6 +199,10 @@ export default function Overview({
             </ul>
           )}
         </section>
+
+        <ReplanPanel workspace={workspace} memberId={member?.member_id ?? null}
+          refreshKey={state?.computed_at ?? ""}
+          onWorkspaceChange={onWorkspaceChange} onNotice={setNotice} />
 
         {/* Plan vs reality */}
         <section className={boxCls}>

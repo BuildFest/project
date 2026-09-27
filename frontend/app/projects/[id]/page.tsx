@@ -9,13 +9,14 @@ import ActingAs from "@/components/ActingAs";
 import MilestoneEditor from "@/components/MilestoneEditor";
 import Overview from "@/components/Overview";
 import PlanTable from "@/components/PlanTable";
+import TeamTab from "@/components/TeamTab";
 import { getProject } from "@/lib/api";
 import { ProjectWorkspace } from "@/lib/types";
-import { IconChecklist, IconCommit, IconProject, IconPulse } from "@/components/Icons";
+import { IconChecklist, IconCommit, IconPeople, IconProject, IconPulse } from "@/components/Icons";
 import { pillCls } from "@/lib/ui";
 
-type Tab = "overview" | "plan" | "activity";
-const TABS: Tab[] = ["overview", "plan", "activity"];
+type Tab = "overview" | "plan" | "activity" | "team";
+const TABS: Tab[] = ["overview", "plan", "activity", "team"];
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -67,6 +68,7 @@ export default function ProjectPage() {
     { key: "overview", label: "Overview", icon: <IconPulse /> },
     { key: "plan", label: "Plan", icon: <IconChecklist />, count: active.length },
     { key: "activity", label: "Activity", icon: <IconCommit /> },
+    { key: "team", label: "Team", icon: <IconPeople />, count: workspace.members.length },
   ];
 
   return (
@@ -113,8 +115,10 @@ export default function ProjectPage() {
             </div>
             <PlanTable workspace={workspace} onChange={setWorkspace} />
           </>
-        ) : (
+        ) : tab === "activity" ? (
           <ActivityTimeline workspace={workspace} />
+        ) : (
+          <TeamTab workspace={workspace} onChange={setWorkspace} />
         )}
       </main>
     </>

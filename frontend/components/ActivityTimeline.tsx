@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, createDecision, createManualLink, listAiRuns, listDecisions, listStatusMoves, listTimeline, undoStatusMove, usingMockApi } from "@/lib/api";
+import { ApiError, createDecision, createManualLink, listAiRuns, listDecisions, listFailures, listStatusMoves, listTimeline, reportFailure, undoStatusMove, usingMockApi } from "@/lib/api";
 import { useActingMember } from "@/lib/actingAs";
-import type { AiRun, Decision, ProjectWorkspace, StatusMove, TimelineItem, TimelineKind } from "@/lib/types";
+import type { AiRun, Decision, ProjectWorkspace, ReportedFailure, StatusMove, TimelineItem, TimelineKind } from "@/lib/types";
 import { actorName, buttonCls, ghostButtonCls, inputCls, timeAgo } from "@/lib/ui";
 
 const POLL_MS = 20_000;
+const FAIL_PAGE_SIZE = 7;
 type Filter = "all" | "github" | "plan" | "risk" | "decision" | "fails";
 
 const FILTERS: Array<{ value: Filter; label: string }> = [
@@ -24,6 +25,7 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const [items, setItems] = useState<TimelineItem[] | null>(null);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [fails, setFails] = useState<AiRun[] | null>(null);
+  const [reportedFails, setReportedFails] = useState<ReportedFailure[] | null>(null);
   const [moves, setMoves] = useState<StatusMove[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -38,16 +40,18 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
   const [decisionTasks, setDecisionTasks] = useState<string[]>([]);
 
   const loadFirst = useCallback(async () => {
-    const [page, knownDecisions, failedRuns, knownMoves] = await Promise.all([
+    const [page, knownDecisions, failedRuns, reportedFailures, knownMoves] = await Promise.all([
       listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
       listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items, () => []),
+      listFailures(pid, { limit: 100 }).then((p) => p.items, () => []),
       listStatusMoves(pid).catch(() => [] as StatusMove[]),
     ]);
     setItems(page.items);
     setCursor(page.next_cursor);
     setDecisions(knownDecisions);
     setFails(failedRuns);
+    setReportedFails(reportedFailures);
     setMoves(knownMoves);
     setError(null);
   }, [pid, taskId]);
@@ -58,14 +62,16 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
       listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
       listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items, () => []),
+      listFailures(pid, { limit: 100 }).then((p) => p.items, () => []),
       listStatusMoves(pid).catch(() => [] as StatusMove[]),
     ]).then(
-      ([page, knownDecisions, failedRuns, knownMoves]) => {
+      ([page, knownDecisions, failedRuns, reportedFailures, knownMoves]) => {
         if (cancelled) return;
         setItems(page.items);
         setCursor(page.next_cursor);
         setDecisions(knownDecisions);
         setFails(failedRuns);
+        setReportedFails(reportedFailures);
         setMoves(knownMoves);
         setError(null);
       },
@@ -156,8 +162,8 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
         {FILTERS.map((option) => <button key={option.value} onClick={() => setFilter(option.value)}
           className={`flex items-center gap-1.5 border-b-2 pb-1 text-sm ${filter === option.value ? "border-signal font-medium text-header" : "border-transparent text-muted hover:text-header"}`}>
           {option.label}
-          {option.value === "fails" && !!fails?.length && (
-            <span className="rounded-full bg-red/15 px-1.5 text-xs font-semibold text-red">{fails.length}</span>
+          {option.value === "fails" && (fails?.length ?? 0) + (reportedFails?.length ?? 0) > 0 && (
+            <span className="rounded-full bg-red/15 px-1.5 text-xs font-semibold text-red">{(fails?.length ?? 0) + (reportedFails?.length ?? 0)}</span>
           )}
         </button>)}
       </div>
@@ -175,7 +181,9 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
     </div>}
 
     {filter === "fails" ? (
-      fails === null ? <Loading /> : <FailsList runs={fails} />
+      fails === null || reportedFails === null ? <Loading /> : (
+        <FailsList runs={fails} reported={reportedFails} workspace={workspace} onLogged={loadFirst} />
+      )
     ) : items === null ? <Loading /> : groups.length === 0 ? <Empty hasItems={items.length > 0} filtered={filter !== "all" || !!taskId} /> : (
       <div>{groups.map((group) => <section key={group.label} className="border-b border-line py-6">
         <h3 className="mb-4 text-xs font-semibold uppercase tracking-[.14em] text-faint">{group.label}</h3>
@@ -414,26 +422,64 @@ function Loading() {
   </div>;
 }
 
-// Every AI call that failed (contract §5.9, backed by ai_runs): the team's
-// own record for the Agentic Stress Test track — what broke, how often,
-// which job/model, and the raw error each time.
-function FailsList({ runs }: { runs: AiRun[] }) {
-  if (runs.length === 0) {
-    return <div className="py-16 text-center"><div className="mx-auto mb-3 h-8 w-px bg-line-strong" /><p className="font-medium text-header">No failures recorded</p><p className="mt-1 text-sm text-muted">Every AI call the router makes — success or failure — is logged here.</p></div>;
+// Every failure the team has hit, in one place, for the Agentic Stress Test
+// track: AI calls that failed (contract §6.3, backed by ai_runs — automatic),
+// unhandled API errors (automatic), and incidents only a human can see — a
+// merge conflict, a local build or deploy failure (logged manually below).
+type FailEntry =
+  | { id: string; created_at: string; kind: "ai"; run: AiRun }
+  | { id: string; created_at: string; kind: "reported"; failure: ReportedFailure };
+
+const CATEGORY_LABEL: Record<ReportedFailure["category"], string> = {
+  internal_error: "internal error", build: "build", deploy: "deploy",
+  merge_conflict: "merge conflict", other: "other",
+};
+
+function FailsList({ runs, reported, workspace, onLogged }: {
+  runs: AiRun[]; reported: ReportedFailure[]; workspace: ProjectWorkspace; onLogged: () => Promise<void>;
+}) {
+  const { member } = useActingMember(workspace);
+  const [logOpen, setLogOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(FAIL_PAGE_SIZE);
+  const entries: FailEntry[] = [
+    ...runs.map((run): FailEntry => ({ id: run.run_id, created_at: run.created_at, kind: "ai", run })),
+    ...reported.map((failure): FailEntry => ({ id: failure.failure_id, created_at: failure.created_at, kind: "reported", failure })),
+  ].sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+  const counts = new Map<string, number>();
+  for (const e of entries) {
+    const key = e.kind === "ai" ? e.run.job : CATEGORY_LABEL[e.failure.category];
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const byJob = new Map<string, number>();
-  for (const r of runs) byJob.set(r.job, (byJob.get(r.job) ?? 0) + 1);
-  const groups = groupRunsByDay(runs);
+  const visibleEntries = entries.slice(0, visibleCount);
+  const remaining = entries.length - visibleEntries.length;
+  const groups = groupEntriesByDay(visibleEntries);
+
   return <div>
-    <div className="flex flex-wrap gap-2 border-b border-line py-4">
-      {[...byJob.entries()].sort((a, b) => b[1] - a[1]).map(([job, count]) => (
-        <span key={job} className="rounded-full border border-red/30 bg-red/5 px-2.5 py-1 text-xs text-red">{job} <span className="font-semibold">×{count}</span></span>
-      ))}
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line py-4">
+      <div className="flex flex-wrap gap-2">
+        {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([label, count]) => (
+          <span key={label} className="rounded-full border border-red/30 bg-red/5 px-2.5 py-1 text-xs text-red">{label} <span className="font-semibold">×{count}</span></span>
+        ))}
+      </div>
+      <button className={ghostButtonCls} disabled={!member} title={member ? undefined : "Choose who you're acting as to log a failure"}
+        onClick={() => setLogOpen((v) => !v)}>{logOpen ? "Cancel" : "Log a failure"}</button>
     </div>
-    {groups.map((group) => <section key={group.label} className="border-b border-line py-6">
+
+    {logOpen && <ReportFailureForm workspace={workspace} onSaved={async () => { setLogOpen(false); await onLogged(); }} onCancel={() => setLogOpen(false)} />}
+
+    {entries.length === 0 ? (
+      <div className="py-16 text-center"><div className="mx-auto mb-3 h-8 w-px bg-line-strong" /><p className="font-medium text-header">No failures recorded</p><p className="mt-1 text-sm text-muted">Failed AI calls and unexpected API errors are logged automatically. Log a merge conflict or build/deploy failure above — those only a human sees.</p></div>
+    ) : groups.map((group) => <section key={group.label} className="border-b border-line py-6">
       <h3 className="mb-4 text-xs font-semibold uppercase tracking-[.14em] text-faint">{group.label}</h3>
-      <ol className="space-y-4">{group.items.map((run) => <FailRow key={run.run_id} run={run} />)}</ol>
+      <ol className="space-y-4">{group.items.map((e) => e.kind === "ai" ? <FailRow key={e.id} run={e.run} /> : <ReportedFailRow key={e.id} failure={e.failure} workspace={workspace} />)}</ol>
     </section>)}
+    {remaining > 0 && <div className="flex items-center justify-between gap-3 py-5">
+      <span className="text-xs text-muted">Showing {visibleEntries.length} of {entries.length}</span>
+      <button className={ghostButtonCls} onClick={() => setVisibleCount((count) => count + FAIL_PAGE_SIZE)}>
+        Load {Math.min(FAIL_PAGE_SIZE, remaining)} more
+      </button>
+    </div>}
   </div>;
 }
 
@@ -466,13 +512,87 @@ function FailRow({ run }: { run: AiRun }) {
   </li>;
 }
 
-function groupRunsByDay(runs: AiRun[]) {
-  const groups: Array<{ label: string; items: AiRun[] }> = [];
-  for (const run of runs) {
-    const label = dayLabel(run.created_at);
+function ReportedFailRow({ failure: f, workspace }: { failure: ReportedFailure; workspace: ProjectWorkspace }) {
+  const [expanded, setExpanded] = useState(false);
+  const short = f.detail && f.detail.length > 160 ? `${f.detail.slice(0, 160)}…` : f.detail;
+  return <li className="grid grid-cols-[20px_minmax(0,1fr)] gap-2">
+    <span className="relative z-10 mt-[2px] grid h-[18px] w-[18px] place-items-center rounded-full bg-yellow text-[10px] font-bold leading-none text-bg" aria-hidden>!</span>
+    <article>
+      <div className="grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-baseline">
+        <div className="min-w-0">
+          <span className="mr-3 text-xs font-medium text-muted">{CATEGORY_LABEL[f.category]}</span>
+          <span className="font-semibold text-header">{f.title}</span>
+          <span className="ml-2 text-xs text-faint">{f.source === "system" ? "auto-logged" : `logged by ${actorName(workspace, f.reported_by) ?? "someone"}`}</span>
+        </div>
+        <time className="shrink-0 text-xs text-faint" dateTime={f.created_at} title={new Date(f.created_at).toLocaleString()}>{timeAgo(f.created_at)}</time>
+      </div>
+      {f.detail && <>
+        <p className="mt-1.5 max-w-2xl whitespace-pre-wrap break-words rounded-md border border-yellow/20 bg-yellow/5 px-2.5 py-1.5 font-mono text-xs leading-5 text-text">
+          {expanded ? f.detail : short}
+        </p>
+        {f.detail.length > 160 && (
+          <button className="mt-1 text-xs font-medium text-muted hover:text-header" onClick={() => setExpanded((v) => !v)}>{expanded ? "Show less" : "Show full detail"}</button>
+        )}
+      </>}
+    </article>
+  </li>;
+}
+
+// Only a human witnesses these — a merge conflict, a build or deploy that
+// failed before the code ever reached the server — so there's no automatic
+// signal to hook into. Mirrors DecisionForm's shape.
+function ReportFailureForm({ workspace, onSaved, onCancel }: {
+  workspace: ProjectWorkspace; onSaved: () => Promise<void>; onCancel: () => void;
+}) {
+  const { member } = useActingMember(workspace);
+  const [category, setCategory] = useState<ReportedFailure["category"]>("build");
+  const [title, setTitle] = useState("");
+  const [detail, setDetail] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    if (!member || !title.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await reportFailure(workspace.project.project_id, { category, title: title.trim(), detail: detail.trim() || undefined, member_id: member.member_id });
+      await onSaved();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't log this failure.");
+      setSaving(false);
+    }
+  }
+
+  return <form className="border-b border-line py-5" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+    <h3 className="text-sm font-semibold text-header">Log a failure</h3>
+    <p className="mt-0.5 text-xs text-muted">For anything the app itself can&apos;t see — a merge conflict, a build that failed locally, a deploy that didn&apos;t go out.</p>
+    <div className="mt-3 grid gap-3 md:grid-cols-2">
+      <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value as ReportedFailure["category"])}>
+        <option value="build">Build failed</option>
+        <option value="deploy">Deploy failed</option>
+        <option value="merge_conflict">Merge conflict</option>
+        <option value="other">Other</option>
+      </select>
+      <input className={inputCls} placeholder="What broke" value={title} onChange={(e) => setTitle(e.target.value)} />
+    </div>
+    <textarea className={`${inputCls} mt-3 min-h-20 w-full`} placeholder="What happened, how often, what you tried (optional)"
+      value={detail} onChange={(e) => setDetail(e.target.value)} />
+    {error && <p className="mt-2 text-xs text-red">{error}</p>}
+    <div className="mt-4 flex gap-2">
+      <button className={buttonCls} disabled={!title.trim() || saving}>{saving ? "Logging…" : "Log failure"}</button>
+      <button type="button" className={ghostButtonCls} onClick={onCancel}>Cancel</button>
+    </div>
+  </form>;
+}
+
+function groupEntriesByDay(entries: FailEntry[]) {
+  const groups: Array<{ label: string; items: FailEntry[] }> = [];
+  for (const entry of entries) {
+    const label = dayLabel(entry.created_at);
     const current = groups[groups.length - 1];
-    if (current?.label === label) current.items.push(run);
-    else groups.push({ label, items: [run] });
+    if (current?.label === label) current.items.push(entry);
+    else groups.push({ label, items: [entry] });
   }
   return groups;
 }

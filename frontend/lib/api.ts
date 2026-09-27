@@ -28,6 +28,7 @@ import type {
   Milestone,
   PlanAgentResult,
   Page,
+  ReportedFailure,
   ProjectWorkspace,
   StatusMove,
   Task,
@@ -376,6 +377,30 @@ export async function listAiRuns(
   if (opts.cursor) q.set("cursor", opts.cursor);
   const qs = q.toString();
   return http<Page<AiRun>>("GET", `/projects/${enc(projectId)}/ai-runs${qs ? `?${qs}` : ""}`);
+}
+
+// Failures that aren't an AI call (contract §6.3): unhandled 500s the API
+// actually hit, or incidents a human logs — a merge conflict, a build or
+// deploy failure. No mock: nothing runs server-side to fail in mock mode.
+export async function listFailures(
+  projectId: string,
+  opts: { category?: ReportedFailure["category"]; limit?: number; cursor?: string | null } = {}
+): Promise<Page<ReportedFailure>> {
+  if (usingMockApi) return { items: [], next_cursor: null };
+  const q = new URLSearchParams();
+  if (opts.category) q.set("category", opts.category);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  if (opts.cursor) q.set("cursor", opts.cursor);
+  const qs = q.toString();
+  return http<Page<ReportedFailure>>("GET", `/projects/${enc(projectId)}/failures${qs ? `?${qs}` : ""}`);
+}
+
+export async function reportFailure(
+  projectId: string,
+  input: { category: ReportedFailure["category"]; title: string; detail?: string; member_id: string }
+): Promise<ReportedFailure> {
+  if (usingMockApi) throw new ApiError("Can't log a failure in demo mode — nothing runs server-side to fail.", 0);
+  return http<ReportedFailure>("POST", `/projects/${enc(projectId)}/failures`, input);
 }
 
 // ---- repositories (contract §4.1–4.3) ----------------------------------------

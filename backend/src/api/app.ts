@@ -7,6 +7,7 @@ import { newId } from "../ids.js";
 import type { BranchRef } from "../ingestion/compare.js";
 import { aiErrorToHttp, pgErrorToHttp } from "./errors.js";
 import { registerAiRunRoutes } from "./aiRuns.js";
+import { logInternalError, registerFailureRoutes } from "./failures.js";
 import { registerBackfillRoutes } from "./backfill.js";
 import { registerBranchRoutes } from "./branches.js";
 import { registerEventRoutes } from "./events.js";
@@ -99,6 +100,7 @@ export function createApp(
     const mapped = pgErrorToHttp(err);
     if (mapped) return c.json(mapped.body, mapped.status);
     console.error(err);
+    void logInternalError(db, c.req.param("projectId") ?? null, err);
     return c.json({ error: "internal error" }, 500);
   });
 
@@ -348,6 +350,10 @@ export function createApp(
   // ---- AI run history / failures (src/api/aiRuns.ts) ------------------------
 
   registerAiRunRoutes(app, db);
+
+  // ---- reported failures (src/api/failures.ts) -------------------------------
+
+  registerFailureRoutes(app, db);
 
   return app;
 }

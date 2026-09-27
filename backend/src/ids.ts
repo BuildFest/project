@@ -6,6 +6,6 @@ const ulid = monotonicFactory();
 
 // Prefixed ULIDs, e.g. "task_01JQ983A...". The prefix makes IDs self-describing
 // in logs and evidence arrays; the ULID sorts by creation time.
-export function newId(prefix: "proj" | "mem" | "ms" | "task" | "repo" | "event" | "link" | "sig" | "col" | "rp" | "tl" | "dec" | "airun" | "note" | "mv" | "mb"): string {
+export function newId(prefix: "proj" | "mem" | "ms" | "task" | "repo" | "event" | "link" | "sig" | "col" | "rp" | "tl" | "dec" | "airun" | "note" | "mv" | "mb" | "fail"): string {
   return `${prefix}_${ulid()}`;
 }

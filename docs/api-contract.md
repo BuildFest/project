@@ -659,6 +659,28 @@ so `related_task_ids` in the response is always current.
 not in this project · `404` unknown project. Each decision also adds a
 `decision` timeline item.
 
+### 6.3 ✅ Fails — owner A
+
+The team's own record of failures, for the Agentic Stress Test track. Two
+sources, both feeding the frontend's "Fails" view:
+
+- `GET /projects/:projectId/ai-runs` — every AI call the router makes,
+  success or failure (the `ai_runs` audit table, §5.0's integration note).
+  Query: `status?` (`success` | `failed`), `limit?` (default 50, max 200),
+  `cursor?`. → `200 Page<AiRun>`, newest first · `404` unknown project.
+- `GET /projects/:projectId/failures` / `POST /projects/:projectId/failures`
+  — failures that aren't an AI call: unhandled `500`s the API actually hit
+  (logged automatically from `app.onError`'s fallback, `source: "system"`),
+  plus incidents only a human can see — a merge conflict, a local build or
+  deploy failure — logged manually (`source: "manual"`).
+  ```ts
+  { category: "internal_error" | "build" | "deploy" | "merge_conflict" | "other";
+    title: string; detail?: string; member_id: string }
+  ```
+  Query (GET): `category?`, `limit?` (default 50, max 200), `cursor?`.
+  → `200 Page<ReportedFailure>` (newest first) / `201 ReportedFailure` ·
+  `400` member not in this project or bad category · `404` unknown project.
+
 ---
 
 ## 7. Build order

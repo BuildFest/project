@@ -433,6 +433,21 @@ export interface AiRun {
   created_at: string;
 }
 
+// Contract §6.3 — a failure that isn't an AI call: an unhandled 500 the API
+// actually hit (source: "system", logged automatically), or an incident
+// only a human can see — a merge conflict, a build or deploy failure
+// (source: "manual", logged by the team).
+export interface ReportedFailure {
+  failure_id: string;
+  project_id: string | null;
+  source: "system" | "manual";
+  category: "internal_error" | "build" | "deploy" | "merge_conflict" | "other";
+  title: string;
+  detail: string | null;
+  reported_by: string | null; // member_id; null for system-logged rows
+  created_at: string;
+}
+
 // Contract §6.2
 // A plan status change the planning agent made on its own (forward-only,
 // evidence-backed). Undoing restores from_status and hands the status back to the team.

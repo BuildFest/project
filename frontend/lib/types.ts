@@ -244,6 +244,20 @@ export interface Collision {
   resolved_at: string | null;
 }
 
+export interface RiskHistoryItem {
+  risk_id: string;
+  kind: "signal" | "collision";
+  title: string;
+  description: string;
+  status: SignalStatus;
+  severity: "info" | "warning" | "critical";
+  related_task_ids: string[];
+  detected_at: string;
+  resolved_at: string | null;
+  detection_event_id: string | null;
+  resolution_event_id: string | null;
+}
+
 export interface ReplanSuggestion {
   suggestion_id: string;
   project_id: string;

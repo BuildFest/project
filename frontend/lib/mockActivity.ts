@@ -107,6 +107,12 @@ export async function createDecision(
   return d;
 }
 
+export async function listDecisions(projectId: string): Promise<Decision[]> {
+  return read<Decision>(DECISIONS_KEY, projectId).sort(
+    (a, b) => Date.parse(b.decided_at) - Date.parse(a.decided_at),
+  );
+}
+
 // ---- branches --------------------------------------------------------------
 
 export async function listBranches(projectId: string): Promise<BranchState[]> {

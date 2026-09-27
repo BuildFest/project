@@ -244,6 +244,8 @@ export async function bootstrapPlanFromBrief(projectId: string, memberId: string
 export async function runPlanningAgent(projectId: string, memberId: string | null): Promise<PlanAgentResult> {
   if (usingMockApi) return { workspace: await mock.getProject(projectId) as ProjectWorkspace };
   return http<PlanAgentResult>("POST", `/projects/${enc(projectId)}/plan-agent/run`, { member_id: memberId });
+}
+
 export async function listRisks(
   projectId: string,
   opts: { status?: "all" | "active" | "resolved" | "dismissed"; limit?: number } = {}

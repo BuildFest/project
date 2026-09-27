@@ -53,6 +53,20 @@ async function updateRow(
   return rows[0] ?? null;
 }
 
+/**
+ * CORS_ORIGIN is a comma-separated list, so local dev and a deployed frontend
+ * can both be allowed ("http://localhost:3000,https://pitcrew-web.up.railway.app").
+ * Unset or empty falls back to the local Next.js dev server. Browsers send
+ * origins without a trailing slash, so one in the variable is dropped.
+ */
+export function corsOrigins(value = process.env.CORS_ORIGIN): string[] {
+  const origins = (value ?? "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+  return origins.length > 0 ? origins : ["http://localhost:3000"];
+}
+
 export function createApp(
   db: Db,
   onEventsIngested?: (projectIds: string[]) => void,
@@ -60,7 +74,7 @@ export function createApp(
 ) {
   const app = new Hono();
 
-  app.use("*", cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:3000" }));
+  app.use("*", cors({ origin: corsOrigins() }));
 
   app.onError((err, c) => {
     if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
@@ -154,6 +168,17 @@ export function createApp(
     const patch = await parseBody(c, UpdateMemberInput);
     const row = await updateRow(db, "project_members", "member_id", c.req.param("projectId"), c.req.param("memberId"), patch);
     return c.json(row ?? notFound("member"));
+  });
+
+  // Hard delete. Foreign keys unassign their tasks (owner_member_id) and clear
+  // brief.updated_by; places that only record who did something (decisions,
+  // plan versions, timeline actors) keep the id as history.
+  app.delete("/projects/:projectId/members/:memberId", async (c) => {
+    const { rowCount } = await db.query("delete from project_members where project_id = $1 and member_id = $2", [
+      c.req.param("projectId"),
+      c.req.param("memberId"),
+    ]);
+    return rowCount ? c.body(null, 204) : notFound("member");
   });
 
   // ---- milestones ----------------------------------------------------------

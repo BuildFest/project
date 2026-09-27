@@ -61,6 +61,30 @@ describe("members", () => {
     expect((await call("PATCH", `/projects/${projectId}/members/${ownerId}`, {})).status).toBe(400);
     expect((await call("POST", "/projects/proj_nope/members", { display_name: "X" })).status).toBe(404);
   });
+
+  it("removes a member, unassigns their tasks and frees their GitHub login", async () => {
+    const { projectId, ownerId } = await createProject();
+    const divij = (await call("POST", `/projects/${projectId}/members`, { display_name: "Divij", github_login: "divij404" })).body;
+    const task = (await call("POST", `/projects/${projectId}/tasks`, { title: "Analyzers", owner_member_id: divij.member_id })).body;
+    await call("PUT", `/projects/${projectId}/brief`, { content: "edited", updated_by: divij.member_id });
+
+    expect((await call("DELETE", `/projects/${projectId}/members/${divij.member_id}`)).status).toBe(204);
+
+    const ws = (await call("GET", `/projects/${projectId}`)).body;
+    expect(ws.members.map((m: any) => m.member_id)).toEqual([ownerId]);
+    expect(ws.tasks.find((t: any) => t.task_id === task.task_id).owner_member_id).toBeNull();
+    expect(ws.brief.updated_by).toBeNull();
+    // The login is free again, e.g. to re-add them.
+    expect((await call("POST", `/projects/${projectId}/members`, { display_name: "Divij", github_login: "divij404" })).status).toBe(201);
+  });
+
+  it("404s for unknown members and never deletes through another project", async () => {
+    const { projectId, ownerId } = await createProject();
+    const other = await createProject();
+    expect((await call("DELETE", `/projects/${projectId}/members/mem_nope`)).status).toBe(404);
+    expect((await call("DELETE", `/projects/${other.projectId}/members/${ownerId}`)).status).toBe(404);
+    expect((await call("GET", `/projects/${projectId}`)).body.members.map((m: any) => m.member_id)).toEqual([ownerId]);
+  });
 });
 
 describe("POST /projects/:projectId/plan-versions", () => {

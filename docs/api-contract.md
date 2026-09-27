@@ -154,6 +154,14 @@ editor should make it easy to fill in. `""` or `null` clears it.
 
 → `200 ProjectMember` · `404` unknown member · `409` login taken
 
+### 2.8 ✅ `DELETE /projects/:projectId/members/:memberId`
+Removes a member. Their tasks become unassigned (`owner_member_id: null`) and
+their GitHub login is free to use again. Records of what they did (decisions,
+plan versions, timeline actors) keep their `member_id` as history, so the UI
+should render an unknown member id as "former member".
+
+→ `204` · `404` unknown member (or a member of another project)
+
 ---
 
 ## 3. Plan — owner A

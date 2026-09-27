@@ -43,8 +43,8 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
     const [page, knownDecisions, failedRuns, reportedFailures, knownMoves] = await Promise.all([
       listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
-      listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items, () => []),
-      listFailures(pid, { limit: 100 }).then((p) => p.items, () => []),
+      listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items),
+      listFailures(pid, { limit: 100 }).then((p) => p.items),
       listStatusMoves(pid).catch(() => [] as StatusMove[]),
     ]);
     setItems(page.items);
@@ -61,8 +61,8 @@ export default function ActivityTimeline({ workspace }: { workspace: ProjectWork
     Promise.all([
       listTimeline(pid, { task_id: taskId || undefined, limit: 50 }),
       listDecisions(pid),
-      listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items, () => []),
-      listFailures(pid, { limit: 100 }).then((p) => p.items, () => []),
+      listAiRuns(pid, { status: "failed", limit: 100 }).then((p) => p.items),
+      listFailures(pid, { limit: 100 }).then((p) => p.items),
       listStatusMoves(pid).catch(() => [] as StatusMove[]),
     ]).then(
       ([page, knownDecisions, failedRuns, reportedFailures, knownMoves]) => {

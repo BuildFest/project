@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
+import { withAiProject } from "../ai/audit.js";
 import type { ModelRouter } from "../ai/router.js";
 import { bootstrapPlanFromBrief } from "../analysis/planBootstrap.js";
 import { STATUS_LABEL } from "../analysis/planSync.js";
@@ -19,7 +20,11 @@ export function registerPlanAgentRoutes(app: Hono, db: Db, router: ModelRouter |
   app.post("/projects/:projectId/plan-agent/bootstrap", async (c) => {
     const input = await parseBody(c, AgentInput);
     const projectId = c.req.param("projectId");
-    const result = await bootstrapPlanFromBrief(db, router, projectId, input.member_id);
+    // Associate bootstrap completions (including failures) with this project
+    // so they appear in its AI audit and Fails view.
+    const result = await withAiProject(projectId, () =>
+      bootstrapPlanFromBrief(db, router, projectId, input.member_id),
+    );
     // The plan has already been committed at this point. A follow-up analysis
     // failure must not turn a successful plan creation into a misleading 500.
     // forcePlanSync: a fresh plan catches up with work already in the repo now.

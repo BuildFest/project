@@ -454,6 +454,13 @@ them, and FE renders them, so all sides need the same list. Field values follow
 the same rules as the plan endpoints (§3), validated by
 `backend/src/api/planChanges.ts`:
 
+The analyzer may create at most one `proposed` suggestion for the current plan
+version when active milestone-slipping or incomplete-dependency signals exist.
+Generation never applies changes: only the accept endpoint mutates the plan.
+Repeated analysis with the same plan version and signal set does not create a
+duplicate; proposals based on an older plan version become `superseded`.
+
+
 ```ts
 type PlanChange =
   | { op: "update_task"; task_id: string; changes: Partial<CreateTaskInput> }

@@ -4,9 +4,15 @@ import { linkProjectEvents } from "./linkEvents.js";
 import { loadProjectSnapshot } from "./load.js";
 import { persistAnalysis, type PersistResult } from "./persist.js";
 import { analyzeProject } from "./pipeline.js";
+import { maybeGenerateReplan, type ReplanGenerationResult } from "./replans.js";
 
-export interface AnalysisRunResult extends PersistResult { aiApplied: boolean; aiError: string | null }
 export interface AnalysisRunOptions { skipLinking?: boolean; skipAi?: boolean }
+export interface AnalysisRunResult extends PersistResult {
+  aiApplied: boolean;
+  aiError: string | null;
+  replan: ReplanGenerationResult | null;
+  replanError: string | null;
+}
 
 export async function runAnalysis(db: Db, router: ModelRouter | null, projectId: string, now = new Date(), options: AnalysisRunOptions = {}): Promise<AnalysisRunResult> {
   // A session-level lock serializes the complete read/interpret/write cycle,
@@ -18,7 +24,14 @@ export async function runAnalysis(db: Db, router: ModelRouter | null, projectId:
     const snapshot = await loadProjectSnapshot(db, projectId);
     const result = await analyzeProject(snapshot, options.skipAi ? null : router, now);
     const persisted = await withTransaction(db, (tx) => persistAnalysis(tx, projectId, snapshot, result));
-    return { ...persisted, aiApplied: result.aiApplied, aiError: result.aiError };
+    let replan: ReplanGenerationResult | null = null;
+    let replanError: string | null = null;
+    try {
+      replan = await maybeGenerateReplan(db, options.skipAi ? null : router, projectId);
+    } catch (error) {
+      replanError = (error as Error).message;
+    }
+    return { ...persisted, aiApplied: result.aiApplied, aiError: result.aiError, replan, replanError };
   } finally {
     await lock.query("select pg_advisory_unlock(hashtext('analysis:' || $1))", [projectId]).catch(() => {});
     lock.release();

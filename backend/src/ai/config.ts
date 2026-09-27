@@ -20,6 +20,7 @@ export interface TierConfig {
   endpoint?: string;
   tenantId?: string;
   clientId?: string;
+  apiVersion?: string;
 }
 
 export interface AiConfig {
@@ -88,7 +89,8 @@ export function loadAiConfig(env: Record<string, string | undefined> = process.e
       if (!endpoint) throw new Error("AZURE_FOUNDRY_AGENT_ENDPOINT must be set when an AI provider is foundry");
       if (!tenantId) throw new Error("AZURE_TENANT_ID must be set when an AI provider is foundry");
       if (!clientId) throw new Error("AZURE_CLIENT_ID must be set when an AI provider is foundry");
-      tiers[tier] = { provider, model, apiKey, endpoint, tenantId, clientId };
+      const apiVersion = env.AZURE_FOUNDRY_API_VERSION?.trim() || undefined;
+      tiers[tier] = { provider, model, apiKey, endpoint, tenantId, clientId, apiVersion };
     } else {
       tiers[tier] = { provider, model, apiKey };
     }

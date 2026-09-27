@@ -6,10 +6,18 @@ function reply(body: unknown) {
 }
 
 describe("foundryAgentClient", () => {
-  it("accepts an OpenAI protocol base or complete Responses URL", () => {
+  it("accepts an OpenAI protocol base or complete Responses URL, and appends api-version", () => {
     const base = "https://example.services.ai.azure.com/api/projects/p/agents/PitCrewer/endpoint/protocols/openai";
-    expect(foundryResponsesUrl(base)).toBe(`${base}/responses`);
-    expect(foundryResponsesUrl(`${base}/responses`)).toBe(`${base}/responses`);
+    expect(foundryResponsesUrl(base)).toBe(`${base}/responses?api-version=v1`);
+    expect(foundryResponsesUrl(`${base}/responses`)).toBe(`${base}/responses?api-version=v1`);
+  });
+
+  it("honors a caller-supplied api-version and doesn't duplicate an existing one", () => {
+    const base = "https://example.services.ai.azure.com/api/projects/p/agents/PitCrewer/endpoint/protocols/openai";
+    expect(foundryResponsesUrl(base, "2025-04-01-preview")).toBe(`${base}/responses?api-version=2025-04-01-preview`);
+    expect(foundryResponsesUrl(`${base}/responses?api-version=2025-04-01-preview`, "v1")).toBe(
+      `${base}/responses?api-version=2025-04-01-preview`,
+    );
   });
 
   it("gets an Entra token and invokes the agent without model reasoning settings", async () => {
@@ -38,7 +46,7 @@ describe("foundryAgentClient", () => {
     expect(String(tokenCall[0])).toContain("/tenant/oauth2/v2.0/token");
     expect(String(tokenCall[1]?.body)).toContain("scope=https%3A%2F%2Fai.azure.com%2F.default");
     const [url, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
-    expect(url).toBe(`${endpoint}/responses`);
+    expect(url).toBe(`${endpoint}/responses?api-version=v1`);
     expect(init.headers).toMatchObject({ authorization: "Bearer token" });
     expect(JSON.parse(init.body as string)).toEqual({
       input: [
